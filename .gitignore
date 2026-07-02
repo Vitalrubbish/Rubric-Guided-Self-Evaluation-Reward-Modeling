@@ -1,0 +1,40 @@
+# Data (datasets, responses, analysis artifacts)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Wandb
+wandb/
+
+# Docker
+sandbox/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (local overrides)
+configs/local.yaml
+*.local.yaml
+models/

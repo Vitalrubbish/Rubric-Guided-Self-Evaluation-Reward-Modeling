@@ -17,13 +17,13 @@ Training a model that can self-discover error patterns and automatically generat
 
 ## Project Phases
 
-### Phase 1 (Assignment 3): Error Discovery + Rubric Generation + Baseline Evaluation
+### Phase 1 : Error Discovery + Rubric Generation + Baseline Evaluation
 
 - Step 1: Build error pattern discovery pipeline
 - Step 2: Automatic rubric generation with comparison to human-written rubrics
 - Step 3: Self-evaluation with auto-generated rubrics (Cohen's Kappa)
 
-### Phase 2 (Assignment 4): Self-Evolving Loop
+### Phase 2 : Self-Evolving Loop
 
 - Method 1: Error-Pattern → Rubric → RL closed loop (iterative DPO)
 - Method 2: Self-Play Error Discovery (explicit error identification before improvement)
