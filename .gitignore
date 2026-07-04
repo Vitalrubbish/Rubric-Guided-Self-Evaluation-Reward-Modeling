@@ -34,6 +34,12 @@ sandbox/
 .DS_Store
 Thumbs.db
 
+# Output
+outputs/
+
+# logs
+logs/
+
 # Config (local overrides)
 configs/local.yaml
 *.local.yaml
