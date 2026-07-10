@@ -1,112 +1,113 @@
-# Phase 2 数据集扩展建议
+# Phase 2 Dataset Expansion Recommendation
 
-Date: 2026-07-09
+Date: 2026-07-10
 
-## 结论
+## Conclusion
 
-更大的数据集是合理的后续扩展，但不应该作为 Phase 2 的第一步。
+A larger dataset is a reasonable follow-up extension, but it should not be the first Phase 2 step.
 
-Phase 1 应冻结为：
+Phase 1 should remain frozen as:
 
 ```text
 MBPP hidden-tests k=3/k=5 -> verifier -> safe failures -> LLM attribution -> clustering -> consolidated taxonomy -> rubric-operational refined taxonomy
 ```
 
-Phase 2 的第一步应是使用 Phase 1 refined taxonomy 自动生成 rubric，并用 LLM rubric judge 做 held-out 评估。数据集扩展应放在 rubric baseline 之后，作为 Phase 2.5 或 robustness extension。
+The first Phase 2 step should be automatic rubric generation from the Phase 1 refined taxonomy, followed by an LLM rubric judge evaluation on held-out responses. Dataset expansion should come after the rubric baseline, as a Phase 2.5 or robustness extension.
 
-## 为什么可以在后续考虑扩展
+## Why Expansion Is Reasonable Later
 
-Phase 1 已经解决了几个关键工程问题：
+Phase 1 has already solved several key engineering issues:
 
-- prompt 不含 assert；
-- verifier 与模型输入隔离；
-- safe/private artifacts 分离；
-- response_id 级对齐；
-- LLM attribution + automatic clustering 跑通；
-- k=3 与 k=5 的错误分布大体稳定。
+- prompts contain no assertions;
+- verifier data is separated from model input;
+- safe and private artifacts are separated;
+- alignment is performed at `response_id` level;
+- LLM attribution and automatic clustering are working;
+- k=3 and k=5 have broadly stable error distributions.
 
-这说明 pipeline 具备迁移基础。但在没有完成 taxonomy -> rubric -> rubric judge 之前，换大数据集不能解决 Phase 2 的核心问题。
+This means the pipeline has a basis for transfer. However, changing to a larger dataset before completing taxonomy -> rubric -> rubric judge would not answer the core Phase 2 question.
 
-## 为什么不能一步全量换大数据集
+## Why Not Switch Directly To A Larger Dataset
 
-当前仍有几个约束：
+Several constraints remain:
 
-- verifier 仍是轻量 multiprocessing，不是完整 sandbox；
-- 聚类仍有 task/sample 重复偏置；
-- taxonomy 已有自动 consolidated + refined 版本，但 rubric judge 尚未完成；
-- 大数据集通常需要处理 stdin/stdout、多个文件、依赖包、复杂超时和安全执行。
+- the verifier is still lightweight multiprocessing, not a full sandbox;
+- clustering can still have task/sample repetition bias;
+- the taxonomy now has automated consolidated and refined versions, but the full rubric judge baseline must be validated first;
+- larger datasets usually require stdin/stdout handling, multi-file tasks, dependency management, complex timeouts, and safer execution.
 
-因此，扩展应先做 adapter + smoke，再做中等规模，再考虑全量。
+The expansion should therefore start with an adapter and smoke run, then move to a medium-scale run, and only then consider full-scale evaluation.
 
-## 候选数据集
+## Candidate Datasets
 
-| 候选 | 角色 | 优点 | 风险 | 建议 |
+| Candidate | Role | Strengths | Risks | Recommendation |
 | --- | --- | --- | --- | --- |
-| HumanEval+ / EvalPlus | 跨基准验证 | 本地已有 `data/raw/humanevalplus_test.jsonl`，工程成本低，测试更严格 | 题目数小，不是真正扩大规模 | 第一优先级，作为 pipeline 迁移 smoke |
-| BigCodeBench | 更真实代码任务 | 任务更接近实际函数调用和复杂指令，官方说明有 1140 software-engineering-oriented tasks | 需要适配其 prompt/evaluator/依赖策略 | 第二优先级，适合 Phase 2 主实验 |
-| LiveCodeBench | 更新、更少污染 | 官方持续更新，release_v6 有 1055 code-generation problems | 在线风格和执行框架更复杂 | 适合做时间切片泛化评估 |
-| APPS | 真正大规模 | 10,000 problems，覆盖从简单到竞赛题 | stdin/stdout、sandbox、时间限制、失败归因都更复杂 | 不建议立刻全量上，先抽样 500-1000 |
+| HumanEval+ / EvalPlus | Cross-benchmark validation | Local `data/raw/humanevalplus_test.jsonl` already exists; engineering cost is low; tests are stricter | Small task count, so it is not a real scale-up | First priority as a pipeline-transfer smoke |
+| BigCodeBench | More realistic code tasks | Closer to real function-call and complex-instruction tasks; official description reports 1140 software-engineering-oriented tasks | Requires prompt, evaluator, and dependency adaptation | Second priority and suitable for a Phase 2 main extension |
+| LiveCodeBench | Newer and less contaminated | Continuously updated; release_v6 has 1055 code-generation problems | Online-style format and execution framework are more complex | Suitable for temporal generalization evaluation |
+| APPS | True large scale | 10,000 problems across easy to competition-level tasks | stdin/stdout, sandboxing, time limits, and failure attribution are substantially more complex | Do not run full scale immediately; start with a 500-1000 task sample |
 
-## 推荐路线
+## Recommended Route
 
-### Step 1：HumanEval+ 迁移 smoke
+### Step 1: HumanEval+ transfer smoke
 
-目标不是扩大规模，而是确认 Phase 1 pipeline 能跨数据格式工作。
+The goal is not to increase scale; it is to confirm that the Phase 1 pipeline can move across data formats.
 
-输出目录建议：
+Recommended output directories:
 
 ```text
 data/responses/phase2_humanevalplus_*
 data/analysis/phase2_humanevalplus_*
 ```
 
-验收标准：
+Acceptance criteria:
 
-- prompt 不泄漏 hidden tests；
-- verifier 通过；
-- safe failure artifacts 不含 private fields；
-- attribution/clustering 可跑完；
-- taxonomy 与 MBPP 结果可比较。
+- prompts do not leak hidden tests;
+- verifier execution works;
+- safe failure artifacts contain no private fields;
+- attribution and clustering complete successfully;
+- taxonomy results are comparable with MBPP.
 
-### Step 2：BigCodeBench 小规模试跑
+### Step 2: BigCodeBench small-scale run
 
-先选 200-300 个任务，k=3。
+Start with 200-300 tasks at k=3.
 
-需要新增：
+Required additions:
 
 - `prepare_bigcodebench_prompts.py`
-- `verify_bigcodebench.py` 或复用官方 evaluator 输出适配器；
-- `build_failure_artifacts.py` 的 dataset adapter；
-- 与 Phase 1 一致的 safe/private diagnostics 分离。
+- `verify_bigcodebench.py` or an adapter around the official evaluator output
+- dataset adapter support in `build_failure_artifacts.py`
+- the same safe/private diagnostics separation used by Phase 1
 
-验收标准：
+Acceptance criteria:
 
-- 至少 500 个失败 response 可用于归因；
-- verifier 失败类型能映射到 syntax/runtime/logic/timeout/interface；
-- 聚类最大簇不超过 25%；
-- unique task count 与 response count 都被报告。
+- at least 500 failed responses are available for attribution;
+- verifier failure types can map to syntax/runtime/logic/timeout/interface categories;
+- the largest cluster is no more than 25%;
+- both unique task count and response count are reported.
 
-### Step 3：APPS 抽样，不直接全量
+### Step 3: APPS sample, not full scale
 
-如果目标转向 reward model / DPO 训练，再抽样 APPS。
+If the project goal shifts toward reward-model or DPO training, then sample APPS.
 
-建议先做：
+Recommended first sample:
 
 ```text
 APPS introductory/interview subset, 500-1000 tasks, k=3
 ```
 
-不要一开始全量 10,000，因为执行安全、运行时间和归因成本都会明显上升。
+Do not start with all 10,000 tasks, because execution safety, runtime, and attribution cost all increase sharply.
 
-## 当前决策
+## Current Decision
 
-合理的下一步是：
+The reasonable next sequence is:
 
-1. 冻结 Phase 1 文档和 refined taxonomy。
-2. 基于 refined taxonomy 自动生成 rubric。
-3. 用 held-out validation/test responses 跑 LLM rubric judge。
-4. 在 rubric baseline 成立后，用 HumanEval+ 做最小跨基准迁移。
-5. 再设计 BigCodeBench adapter，先跑 200-300 task。
-6. 在 BigCodeBench smoke 稳定后，再决定是否上 APPS 抽样。
+1. Freeze Phase 1 documentation and refined taxonomy.
+2. Generate the rubric automatically from the refined taxonomy.
+3. Run the LLM rubric judge on held-out validation/test responses.
+4. Because the first full LLM judge baseline is valid but lenient, rerun the repaired/fallback judge cases when a GPU is actually idle and use that as the stabilized Phase 2 baseline.
+5. After the rubric baseline is stabilized, run the minimal HumanEval+ cross-benchmark transfer.
+6. Design a BigCodeBench adapter and run 200-300 tasks first.
+7. After the BigCodeBench smoke is stable, decide whether to run an APPS sample.
 
-不建议现在直接把 Phase 1 改成“大数据集版本”。Phase 1 应作为稳定 baseline；数据扩展应在 rubric baseline 之后推进。
+Do not convert Phase 1 into a large-dataset version now. Phase 1 should remain the stable baseline, and dataset expansion should proceed only after the rubric baseline is validated.
