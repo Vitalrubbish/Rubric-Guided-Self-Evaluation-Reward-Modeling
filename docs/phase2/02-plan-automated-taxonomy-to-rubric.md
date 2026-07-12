@@ -156,13 +156,20 @@ generic_dimension_flags = []
 used_existing_llm_output = true
 ```
 
-## Implemented LLM Rubric Judge
+## Current Rubric Judge Entrypoints
 
 Rubric judging is implemented in:
 
 ```text
 src/rubric/evaluate_llm_rubric_judge.py
-scripts/run_phase2_llm_judge.sh
+scripts/run_phase2_hitl_judge.sh
+```
+
+The active versioned entrypoints are:
+
+```text
+scripts/run_phase2_hitl_v3_judge.sh
+scripts/run_phase2_hitl_v5_lite_failures_judge.sh
 ```
 
 Evaluation input:
@@ -171,265 +178,58 @@ Evaluation input:
 data/responses/phase1_mbpp_hidden_qwen25_k3_labeled.jsonl
 ```
 
-Outputs:
+## Active Baseline: v3
 
-```text
-data/rubrics/phase2/mbpp_hidden_llm_judge_scores_validation_test.jsonl
-data/rubrics/phase2/mbpp_hidden_llm_judge_metrics_validation_test.json
-data/rubrics/phase2/mbpp_hidden_llm_judge_audit_validation_test.json
-data/rubrics/phase2/mbpp_hidden_llm_judge_raw_validation_test.jsonl
-```
+v3 is the baseline for later RL because it measures rubric-based self-evaluation without an external execution gate.
 
-Full held-out command:
+Run command:
 
 ```bash
-GPU=2 scripts/run_phase2_llm_judge.sh
+GPU=2 scripts/run_phase2_hitl_v3_judge.sh
 ```
 
-Small LLM smoke command:
-
-```bash
-GPU=2 LIMIT=4 TAG=smoke_llm BATCH_SIZE=4 MAX_NUM_SEQS=4 scripts/run_phase2_llm_judge.sh
-```
-
-CPU-only schema and metrics debugging command:
-
-```bash
-DETERMINISTIC_ONLY=1 LIMIT=4 TAG=smoke_det scripts/run_phase2_llm_judge.sh
-```
-
-Evaluation requirements:
-
-- the rubric is generated from the Phase 1 refined taxonomy, which was induced from train failures;
-- the judge evaluates validation/test responses only;
-- judge prompts do not include verifier labels, assertions, `test_list`, or `private_diagnostics`;
-- outputs include AUC, accuracy, Cohen's Kappa, and per-category score distributions.
-
-Current LLM judge smoke status:
-
-```text
-num_samples = 4
-prompt_leakage_count = 0
-json_parse_failed_count = 0
-repaired_record_count = 0
-used_visible_code_fallback_count = 0
-valid = true
-```
-
-The smoke run proves prompt sanitization, vLLM execution, JSON parsing, repair/audit, and metric writing. Formal conclusions must use the full validation/test run.
-
-## Full Held-Out Run
-
-The full validation/test LLM judge run completed on 2026-07-10:
-
-```bash
-GPU=2 GPU_MEMORY_UTILIZATION=0.25 BATCH_SIZE=16 MAX_NUM_SEQS=16 MAX_TOKENS=768 scripts/run_phase2_llm_judge.sh
-```
-
-The raw outputs were then reprocessed without another GPU run after two audit/parser fixes:
-
-- leakage audit now treats private fields as JSON/metadata keys, so public MBPP identifiers such as a function parameter named `test_list` are not false positives;
-- JSON parsing now prefers the actual judge object with `dimension_scores` when the model first repeats a public-input JSON object.
-
-Reprocess command:
-
-```bash
-REUSE_RAW_OUTPUT=data/rubrics/phase2/mbpp_hidden_llm_judge_raw_validation_test.jsonl scripts/run_phase2_llm_judge.sh
-```
-
-Final full-run audit:
-
-```text
-num_requested_rows = 1770
-score_rows = 1770
-raw_rows = 1770
-prompt_leakage_count = 0
-json_parse_failed_count = 0
-repaired_record_count = 205
-used_visible_code_fallback_count = 203
-valid = true
-```
-
-Final full-run metrics:
+Full test metrics:
 
 | Metric | Value |
 | --- | ---: |
-| LLM judge AUC | 0.603597 |
-| Cohen's Kappa | 0.152540 |
-| Accuracy | 0.572881 |
-| Mean score, passed responses | 4.735021 |
-| Mean score, failed responses | 4.452407 |
-| Predicted pass rate | 0.696610 |
-| True pass rate | 0.489831 |
+| AUC | 0.618196 |
+| Accuracy | 0.586667 |
+| Cohen's Kappa | 0.184811 |
+| Overacceptance | 0.701823 |
+| False rejection | 0.110656 |
 
-Interpretation:
+## Active Training Signal: v5-Lite Failures
 
-- The end-to-end Phase 2 pipeline is operational: full held-out scoring completed, row counts match, prompt leakage is zero, JSON parse failures are zero, and the audit is valid.
-- The judge is still too lenient. It assigns high scores to both passed and failed responses, which explains the weak Kappa and high predicted pass rate.
-- 205/1770 records required repair, with 203 falling back to visible-code heuristics because the model repeated the public input instead of emitting the required judge JSON. The runner now supports raw-output reprocessing, and the prompt has been tightened for future reruns. A targeted rerun of those 205 repaired rows is the recommended next robustness step when a GPU is actually idle.
+v5-lite failures is a verifier-failure-gated rubric judge. It is used to produce lower-noise reward and preference construction signals, not as proof that the LLM can self-evaluate without external execution evidence.
 
-## Score Calibration Update
+Run command:
 
-A no-GPU score calibration pass was added after the first full run. It reuses the existing raw judge outputs and improves prediction in two stages:
-
-1. `calibrated_t475`: deterministic code clamps plus programmatic pass/fail calculation with a validation-selected score threshold of `4.75`;
-2. `validation_logistic`: a small L2 logistic calibrator trained only on validation rows, then applied to test/all rows.
-
-Calibration artifacts:
-
-```text
-src/rubric/calibrate_llm_judge_scores.py
-scripts/run_phase2_score_calibration.sh
-data/rubrics/phase2/mbpp_hidden_llm_judge_scores_validation_test_calibrated_t475.jsonl
-data/rubrics/phase2/mbpp_hidden_llm_judge_metrics_validation_test_calibrated_t475.json
-data/rubrics/phase2/mbpp_hidden_llm_judge_scores_validation_logistic.jsonl
-data/rubrics/phase2/mbpp_hidden_llm_judge_metrics_validation_logistic.json
+```bash
+scripts/run_phase2_hitl_v5_lite_failures_judge.sh
 ```
 
-Current comparison:
+Full test metrics:
 
-| Setting | Split | AUC | Accuracy | Kappa | Predicted pass rate |
-| --- | --- | ---: | ---: | ---: | ---: |
-| Original LLM boolean | all | 0.603597 | 0.572881 | 0.152540 | 0.696610 |
-| Deterministic + threshold | all | 0.655815 | 0.624294 | 0.253477 | 0.661017 |
-| Validation logistic calibrator | all | 0.660290 | 0.641808 | 0.290174 | 0.727119 |
-| Original LLM boolean | test | 0.615479 | 0.578000 | 0.164052 | 0.700667 |
-| Deterministic + threshold | test | 0.666387 | 0.628667 | 0.263111 | 0.663333 |
-| Validation logistic calibrator | test | 0.666834 | 0.647333 | 0.302148 | 0.723333 |
+| Metric | Value |
+| --- | ---: |
+| AUC | 0.950606 |
+| Accuracy | 0.943333 |
+| Cohen's Kappa | 0.886292 |
+| Overacceptance | 0.0 |
+| False rejection | 0.116120 |
 
-The recommended current score artifact is:
+## Reporting Rule
 
-```text
-data/rubrics/phase2/mbpp_hidden_llm_judge_scores_validation_logistic.jsonl
-```
-
-The logistic calibrator improves Kappa and accuracy, but it is still permissive: the predicted pass rate remains higher than the verifier pass rate. It should be reported as an optimized calibration baseline, not as a solved judge.
+Report v3 as the pre-RL self-evaluation baseline. Report v5-lite failures as a teacher/scaffold for reward construction. Do not report v5-lite failures as pure LLM self-evaluation, because it uses verifier execution results in post-processing.
 
 ## Acceptance Criteria
 
-The full Phase 2 run should be accepted only if:
+The retained Phase 2 scoring pipeline is accepted only if:
 
-- the score file contains the expected validation+test row count;
+- the score and raw output files contain the expected row count;
 - `audit.valid == true`;
 - `prompt_leakage_count == 0`;
-- JSON parse failures and repaired outputs are either zero or explained by the audit;
-- the judge never receives verifier labels, hidden tests, exact assertions, or private diagnostics;
-- metrics are reported against verifier pass/fail labels.
-
-## No Manual Intervention
-
-If LLM rubric generation or LLM judge output has formatting errors, the scripts should repair or fall back automatically. Manual editing must not be part of taxonomy or rubric generation; humans should only read final reports and audits.
-
-## Judge Improvement Plan
-
-The current best calibrated judge is useful as a Phase 2 baseline, but it is not reliable enough to replace the verifier or to create full training labels. The main weakness is still over-acceptance: many verifier-failed responses receive high judge scores or high calibrated pass probability.
-
-The next improvements should keep the data boundary fixed:
-
-```text
-train responses      -> allowed for taxonomy, rubric induction, preference construction, and training
-validation responses -> allowed for threshold selection, calibration, and ablation selection
-test responses       -> final evaluation only; no tuning and no training
-```
-
-### 1. Targeted rerun for malformed judge outputs
-
-The full run still contains 205 repaired rows, including 203 rows where the model repeated public input instead of producing the required judgment JSON. These rows should be rerun with a stricter prompt when GPU is idle.
-
-Acceptance criteria:
-
-- repaired row count decreases substantially;
-- JSON parse failures remain zero;
-- prompt leakage remains zero;
-- test metrics are reported after applying the same validation-selected calibration procedure.
-
-### 2. Stronger evidence-first judge prompt
-
-The current judge can assign high scores without demonstrating evidence. The next prompt should require each dimension to include:
-
-- visible code evidence;
-- an explicit possible failure risk;
-- the final 1-5 score.
-
-The prompt should forbid score 5 unless the judge names concrete evidence from the submitted code. This is especially important for `algorithmic_wrong_value`, `numeric_formula_correctness`, `edge_case_boundary_handling`, and `string_regex_pattern_logic`.
-
-### 3. Deterministic checker expansion
-
-Machine-checkable dimensions should not rely only on LLM judgment. The deterministic layer should expand beyond the current syntax/interface/runtime clamps:
-
-- AST parseability and duplicated top-level definitions;
-- required function/class name and arity from public signatures;
-- missing imports for common namespaces such as `re`, `math`, `heapq`, `itertools`, and `collections`;
-- markdown fence or explanation pollution only when extraction cannot recover valid code;
-- explicit stubs such as `pass`, `TODO`, or `NotImplementedError`;
-- suspicious multiple definitions of the same public function.
-
-These checks should clamp only when the evidence is unambiguous, to avoid reducing agreement with the verifier because of harmless formatting.
-
-### 4. Task-specific public checklist
-
-The taxonomy-level rubric is too generic to fully evaluate task-specific semantics. For each held-out task, generate a checklist from public information only:
-
-```text
-task description + public interface -> task-specific checklist
-```
-
-The checklist should include:
-
-- expected input and output shape;
-- core transformation or predicate;
-- boundary cases implied by the public wording;
-- common pitfalls inferred from the task wording;
-- regex/string behavior when relevant.
-
-The checklist must not use `test_list`, hidden assertions, expected values, private diagnostics, or verifier failure messages.
-
-### 5. Lightweight public sanity simulation
-
-For semantic dimensions, the judge should construct 1-3 simple sanity cases from the public task description and manually simulate the submitted code. This is not a hidden-test verifier; it is a public reasoning aid.
-
-Expected benefit:
-
-- fewer high-score verifier failures;
-- better separation for algorithmic, numeric, edge-case, and regex/string dimensions;
-- more useful rationales for error analysis.
-
-Risk:
-
-- the LLM may create incorrect sanity cases. The prompt should require simple cases and explain that they are heuristic evidence, not ground-truth tests.
-
-### 6. Validation-only calibration
-
-Any threshold, gate, or calibrator must be selected on validation only. Test is reserved for final evaluation.
-
-Current best calibration:
-
-```text
-source score file = mbpp_hidden_llm_judge_scores_validation_test_calibrated_t475.jsonl
-calibrator = L2 logistic regression
-calibration split = validation
-threshold = 0.535
-test AUC = 0.666834
-test accuracy = 0.647333
-test Kappa = 0.302148
-```
-
-Future calibrators may use richer features, but they must not use test labels during feature selection, threshold selection, or model selection.
-
-### 7. High-confidence training boundary
-
-Until judge quality improves, judge outputs should not be used as full training labels. Safe uses are:
-
-- high-confidence failure mining;
-- auxiliary reward features;
-- ranking diagnostics;
-- selecting candidates for human or verifier review.
-
-Unsafe uses are:
-
-- judge-only positive labels for DPO;
-- full replacement of verifier pass/fail labels;
-- training on validation/test judge labels or verifier labels;
-- repeated test-driven calibration.
-
-For preference construction, use train split only and prefer verifier-confirmed pairs. Judge-only signals should be filtered by high-confidence thresholds and audited before entering training.
+- JSON parse failures and repaired outputs are explained by the audit;
+- judge prompts do not receive verifier labels, hidden tests, exact assertions, or private diagnostics;
+- metrics are reported against verifier pass/fail labels;
+- v3 and v5-lite failures are reported under separate roles.
