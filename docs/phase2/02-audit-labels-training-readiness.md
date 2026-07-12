@@ -6,6 +6,8 @@
 
 项目中确实已有大量“标注数据”，但目前保留的 active training signal 是代码 verifier 自动标签和 v5-lite failures 生成的 verifier-gated rubric signal，不是人工 rubric 标注。因此这些数据可以训练或评估 verifier-supervised pass/fail critic，也可以构造代码 preference；不能用于报告 human-GT Kappa，也不能冒充 8 个 rubric 维度的人工 1--5 分。
 
+在 `task.md` 对应关系上，这些资产是 **作业 4 方法 1：Error-Pattern -> Rubric -> RL 闭环** 的 Method 1 handoff 输入。Phase 2 到此结束；最终 self-evaluation 能力提升应在 Method 1 训练后、关闭 execution gate 的评估中验证。
+
 GPU 可用性需要在实际启动训练前重新检查。模型、Python 环境和磁盘均已就绪。
 
 ## 标注资产盘点
@@ -72,9 +74,9 @@ data/hitl/rubric_human_review_key_private_v1.jsonl
 
 ## Go/No-Go 决策
 
-当前结论为 **Go for verifier-gated reward construction, No-Go for human-GT claims**。
+当前结论为 **Phase 2 complete; Go for Method 1 verifier-gated reward construction; No-Go for human-GT claims**。
 
-现在可以安全继续的工作：
+Method 1 可以继续的工作：
 
 1. 使用 v3 作为 pre-RL self-evaluation baseline。
 2. 使用 v5-lite failures 构造低噪声 reward/preference 信号。

@@ -578,7 +578,7 @@ DPO validation 上的保护版级联：
 - `scripts/vllm_smoke_generate.py`
 - `scripts/verify_mbpp_smoke.py`
 - `scripts/build_failure_artifacts.py`
-- `scripts/refine_error_taxonomy.py`
+- `scripts/error-analysis/discover_error_taxonomy.py`
 - `scripts/generate_auto_rubric.py`
 - `scripts/evaluate_rubric_static.py`
 - `scripts/build_preference_pairs.py`

@@ -2,19 +2,41 @@
 
 Date: 2026-07-10
 
-## Objective
+## Objective And Task Alignment
+
+Phase 2 implements the rubric-generation and rubric-judging part of `task.md`.
+
+It covers **作业 3 Step 2--3**:
+
+- generate a rubric from discovered error patterns;
+- use the generated rubric for self-evaluation;
+- compare self-evaluation with an external verifier.
+
+It also prepares the handoff artifacts for **作业 4 方法 1：Error-Pattern -> Rubric -> RL 闭环**:
+
+- v3 provides the pre-RL self-evaluation baseline;
+- v5-lite failures provides a verifier-gated teacher signal for reward/preference construction;
+- the next RL stage belongs to Method 1, not Phase 2.
 
 Phase 2 no longer owns taxonomy consolidation or refined-taxonomy generation. Both steps are now part of Phase 1, which produces the refined rubric-operational taxonomy consumed by Phase 2.
 
-The Phase 2 objective is to automatically generate a formal rubric from the Phase 1 refined taxonomy, then use an LLM rubric judge to evaluate held-out validation/test responses against verifier labels. The flow remains fully automated:
+The Phase 2 objective is to automatically generate a formal rubric from the Phase 1 refined taxonomy, then use an LLM rubric judge to evaluate held-out responses against verifier labels. The retained flow is:
 
 ```text
 Phase 1 refined taxonomy
 -> LLM rubric generation
 -> deterministic rubric schema/leakage audit + repair/fallback
--> LLM rubric judge
+-> v3 no-gate LLM rubric judge baseline
+-> v5-lite verifier-gated rubric signal
 -> deterministic judge schema/leakage audit + repair/fallback
 -> verifier-alignment metrics
+```
+
+Completion boundary:
+
+```text
+Phase 2 ends when v3 baseline metrics and v5-lite failures signal are produced.
+RL/DPO/critic training starts in Method 1.
 ```
 
 ## Completed Inputs
@@ -109,6 +131,7 @@ The Phase 2 program is responsible for:
 - rubric category coverage checks;
 - sanitized judge-input construction;
 - LLM output repair/fallback;
+- execution-gated post-processing for v5-lite failures;
 - AUC, accuracy, Cohen's Kappa, and per-category score distribution computation.
 
 ## Implemented Rubric Generation
@@ -180,7 +203,7 @@ data/responses/phase1_mbpp_hidden_qwen25_k3_labeled.jsonl
 
 ## Active Baseline: v3
 
-v3 is the baseline for later RL because it measures rubric-based self-evaluation without an external execution gate.
+v3 is the baseline for later RL because it measures rubric-based self-evaluation without an external execution gate. It corresponds to the `task.md` self-evaluation metric before self-evolving training.
 
 Run command:
 
@@ -200,7 +223,7 @@ Full test metrics:
 
 ## Active Training Signal: v5-Lite Failures
 
-v5-lite failures is a verifier-failure-gated rubric judge. It is used to produce lower-noise reward and preference construction signals, not as proof that the LLM can self-evaluate without external execution evidence.
+v5-lite failures is a verifier-failure-gated rubric judge. It is used to produce lower-noise reward and preference construction signals for the Method 1 RL loop, not as proof that the LLM can self-evaluate without external execution evidence.
 
 Run command:
 
@@ -221,6 +244,15 @@ Full test metrics:
 ## Reporting Rule
 
 Report v3 as the pre-RL self-evaluation baseline. Report v5-lite failures as a teacher/scaffold for reward construction. Do not report v5-lite failures as pure LLM self-evaluation, because it uses verifier execution results in post-processing.
+
+## Completion Status
+
+Phase 2 is complete for the current Method 1 handoff:
+
+- v3 baseline is available.
+- v5-lite failures signal is available.
+- obsolete intermediate judge/calibration/HITL implementations were removed.
+- Method 1 owns the next RL/DPO/critic training loop.
 
 ## Acceptance Criteria
 
