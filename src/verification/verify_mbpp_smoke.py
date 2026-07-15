@@ -6,11 +6,33 @@ from __future__ import annotations
 import argparse
 import ast
 import builtins
+import contextlib
+import concurrent.futures
+import io
 import json
 import multiprocessing as mp
+import os
 import re
+import sys
+import tempfile
+import unittest
 import traceback
+import types
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+if hasattr(sys, "set_int_max_str_digits"):
+    sys.set_int_max_str_digits(0)
+
+
+@contextlib.contextmanager
+def redirect_stdin(target):
+    old_stdin = sys.stdin
+    try:
+        sys.stdin = target
+        yield target
+    finally:
+        sys.stdin = old_stdin
 
 
 def read_jsonl(path: Path):
@@ -156,6 +178,171 @@ def humaneval_sources(row: dict, code: str) -> list[tuple[str, str]]:
     return sources
 
 
+def extract_starter_from_prompt(prompt: str) -> str:
+    marker = "\nStarting code:\n"
+    end_marker = "\n\nDefine "
+    if marker not in prompt:
+        return ""
+    tail = prompt.split(marker, 1)[1]
+    if end_marker in tail:
+        tail = tail.split(end_marker, 1)[0]
+    elif "\n\nPython code:" in tail:
+        tail = tail.split("\n\nPython code:", 1)[0]
+    return tail.strip("\n\r") + "\n"
+
+
+def bigcodebench_sources(row: dict, code: str) -> list[tuple[str, str]]:
+    starter = row.get("code_prompt") or row.get("starter_code") or extract_starter_from_prompt(row.get("prompt", ""))
+    sources = [("generated_only", code)]
+    required = set(row.get("interface_names") or [])
+    entry_point = row.get("entry_point")
+    if entry_point:
+        required.add(entry_point)
+    defines_required = any(re.search(rf"\bdef\s+{re.escape(name)}\s*\(", code) for name in required)
+    if starter and not defines_required and not code.lstrip().startswith(starter.lstrip()):
+        sources.append(("starter_plus_completion", starter.rstrip() + "\n" + code))
+    return sources
+
+
+def parse_apps_input_output(row: dict) -> dict:
+    raw = row.get("input_output") or {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def apps_sources(row: dict, code: str) -> list[tuple[str, str]]:
+    starter = row.get("starter_code") or extract_starter_from_prompt(row.get("prompt", ""))
+    sources = [("generated_only", code)]
+    required = set(row.get("interface_names") or [])
+    defines_required = any(re.search(rf"\bdef\s+{re.escape(name)}\s*\(", code) for name in required)
+    defines_solution_class = bool(re.search(r"\bclass\s+Solution\b", code))
+    if starter and required and not defines_required and not defines_solution_class and not code.lstrip().startswith(starter.lstrip()):
+        sources.append(("starter_plus_completion", starter.rstrip() + "\n" + code))
+    return sources
+
+
+def apps_namespace() -> dict[str, object]:
+    return {
+        "__name__": "__apps_candidate__",
+        "List": List,
+        "Dict": Dict,
+        "Set": Set,
+        "Tuple": Tuple,
+        "Optional": Optional,
+        "Any": Any,
+        "types": types,
+    }
+
+
+def normalize_stdout(text: object) -> list[str]:
+    return str(text).strip().split()
+
+
+def compare_apps_stdout(actual: str, expected: object) -> bool:
+    expected_text = str(expected)
+    return actual.strip() == expected_text.strip() or normalize_stdout(actual) == normalize_stdout(expected_text)
+
+
+def normalize_apps_value(value: object) -> object:
+    if isinstance(value, tuple):
+        return [normalize_apps_value(item) for item in value]
+    if isinstance(value, list):
+        return [normalize_apps_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: normalize_apps_value(item) for key, item in value.items()}
+    return value
+
+
+def compare_apps_value(actual: object, expected: object, depth: int = 0) -> bool:
+    if depth < 3 and isinstance(expected, list) and len(expected) == 1:
+        if compare_apps_value(actual, expected[0], depth + 1):
+            return True
+    if isinstance(actual, float) or isinstance(expected, float):
+        try:
+            return abs(float(actual) - float(expected)) <= 1e-6
+        except Exception:  # noqa: BLE001
+            return False
+    return normalize_apps_value(actual) == normalize_apps_value(expected)
+
+
+def run_apps_function_cases(namespace: dict[str, object], io_spec: dict) -> None:
+    fn_name = io_spec.get("fn_name")
+    if not isinstance(fn_name, str) or not fn_name:
+        raise NameError("APPS function-call input_output does not define fn_name")
+
+    inputs = io_spec.get("inputs") or []
+    outputs = io_spec.get("outputs") or []
+    if len(inputs) != len(outputs):
+        raise ValueError(f"APPS input/output length mismatch: {len(inputs)} != {len(outputs)}")
+
+    solution_cls = namespace.get("Solution")
+    free_fn = namespace.get(fn_name)
+    for index, (args_value, expected) in enumerate(zip(inputs, outputs)):
+        if isinstance(args_value, list):
+            args = args_value
+        elif isinstance(args_value, tuple):
+            args = list(args_value)
+        else:
+            args = [args_value]
+
+        if isinstance(solution_cls, type) and hasattr(solution_cls, fn_name):
+            candidate = getattr(solution_cls(), fn_name)
+        elif callable(free_fn):
+            candidate = free_fn
+        else:
+            raise NameError(f"entry point not defined: Solution.{fn_name} or {fn_name}")
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            actual = candidate(*args)
+        if not compare_apps_value(actual, expected):
+            raise AssertionError(
+                f"case {index}: expected {safe_repr(expected, 160)}, got {safe_repr(actual, 160)}"
+            )
+
+
+def run_apps_stdin_cases(source: str, io_spec: dict) -> None:
+    inputs = io_spec.get("inputs") or []
+    outputs = io_spec.get("outputs") or []
+    if len(inputs) != len(outputs):
+        raise ValueError(f"APPS input/output length mismatch: {len(inputs)} != {len(outputs)}")
+
+    for index, (stdin_text, expected) in enumerate(zip(inputs, outputs)):
+        namespace = apps_namespace()
+        namespace["__name__"] = "__main__"
+        stdout = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()), redirect_stdin(io.StringIO(str(stdin_text))):
+                exec(compile(source, "<generated_apps>", "exec"), namespace, namespace)
+        except SystemExit as exc:
+            if exc.code not in (None, 0):
+                raise
+        actual = stdout.getvalue()
+        if not compare_apps_stdout(actual, expected):
+            raise AssertionError(
+                f"case {index}: expected stdout {safe_repr(expected, 160)}, got {safe_repr(actual, 160)}"
+            )
+
+
+def run_unittest_cases(namespace: dict[str, object]) -> None:
+    case = namespace.get("TestCases")
+    if not isinstance(case, type) or not issubclass(case, unittest.TestCase):
+        raise NameError("BigCodeBench test does not define unittest.TestCase class TestCases")
+    suite = unittest.TestLoader().loadTestsFromTestCase(case)
+    stream = io.StringIO()
+    result = unittest.TextTestRunner(stream=stream, verbosity=0).run(suite)
+    if not result.wasSuccessful():
+        first = (result.failures + result.errors)[0]
+        exc_text = first[1].strip().splitlines()[-1] if first[1].strip() else "unittest failed"
+        raise AssertionError(exc_text)
+
+
 def execute_source(row: dict, source: str, namespace: dict[str, object]) -> None:
     if row.get("dataset") == "mbpp":
         exec(compile(source, "<generated_mbpp>", "exec"), namespace, namespace)
@@ -282,7 +469,8 @@ def run_code(row: dict, code: str, queue: mp.Queue) -> None:
                 except Exception as exc:  # noqa: BLE001
                     errors.append((source_name, exc, traceback.format_exc(limit=2)))
             if any(isinstance(exc, AssertionError) for _, exc, _ in errors):
-                queue.put({"passed": False, "failure_type": "logic_error", "error": "assertion failed"})
+                source_name, exc, _ = next((item for item in errors if isinstance(item[1], AssertionError)), errors[-1])
+                queue.put({"passed": False, "failure_type": "logic_error", "error": f"{source_name}: {exc}"})
             elif all(isinstance(exc, SyntaxError) for _, exc, _ in errors):
                 source_name, exc, _ = errors[-1]
                 queue.put({"passed": False, "failure_type": "syntax_error", "error": f"{source_name}: {exc}"})
@@ -294,6 +482,114 @@ def run_code(row: dict, code: str, queue: mp.Queue) -> None:
                         "failure_type": "runtime_error",
                         "error": f"{source_name}: {type(exc).__name__}: {exc}",
                         "traceback": tb,
+                    }
+                )
+            return
+        elif row.get("dataset") == "bigcodebench":
+            errors = []
+            old_cwd = os.getcwd()
+            with tempfile.TemporaryDirectory(prefix="bigcodebench_verify_") as tmpdir:
+                os.chdir(tmpdir)
+                try:
+                    os.environ.setdefault("MPLCONFIGDIR", os.path.join(tmpdir, "mplconfig"))
+                    for source_name, candidate_source in bigcodebench_sources(row, code):
+                        namespace = {"__name__": "__bigcodebench_candidate__"}
+                        source = "\n".join(
+                            part
+                            for part in [
+                                candidate_source,
+                                row.get("test", ""),
+                                "run_unittest_cases(globals())",
+                            ]
+                            if part
+                        )
+                        namespace["run_unittest_cases"] = run_unittest_cases
+                        try:
+                            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                                exec(compile(source, "<generated_bigcodebench>", "exec"), namespace, namespace)
+                            queue.put({"passed": True, "failure_type": None, "error": None, "source_mode": source_name})
+                            return
+                        except Exception as exc:  # noqa: BLE001
+                            errors.append((source_name, exc, traceback.format_exc(limit=2)))
+                finally:
+                    os.chdir(old_cwd)
+            if any(isinstance(exc, AssertionError) for _, exc, _ in errors):
+                source_name, exc, _ = next((item for item in errors if isinstance(item[1], AssertionError)), errors[-1])
+                queue.put(
+                    {
+                        "passed": False,
+                        "failure_type": "logic_error",
+                        "error": f"{source_name}: {exc}",
+                        "safe_diagnostics": {"diagnostic_kind": "wrong_output"},
+                    }
+                )
+            elif all(isinstance(exc, SyntaxError) for _, exc, _ in errors):
+                source_name, exc, _ = errors[-1]
+                queue.put({"passed": False, "failure_type": "syntax_error", "error": f"{source_name}: {exc}"})
+            else:
+                source_name, exc, tb = errors[-1]
+                queue.put(
+                    {
+                        "passed": False,
+                        "failure_type": "runtime_error",
+                        "error": f"{source_name}: {type(exc).__name__}: {exc}",
+                        "traceback": tb,
+                        "safe_diagnostics": {
+                            "diagnostic_kind": "runtime_error",
+                            "exception_type": type(exc).__name__,
+                        },
+                    }
+                )
+            return
+        elif row.get("dataset") == "apps":
+            io_spec = parse_apps_input_output(row)
+            fn_name = io_spec.get("fn_name")
+            old_cwd = os.getcwd()
+            errors = []
+            with tempfile.TemporaryDirectory(prefix="apps_verify_") as tmpdir:
+                os.chdir(tmpdir)
+                try:
+                    for source_name, candidate_source in apps_sources(row, code):
+                        try:
+                            if fn_name:
+                                namespace = apps_namespace()
+                                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                                    exec(compile(candidate_source, "<generated_apps>", "exec"), namespace, namespace)
+                                run_apps_function_cases(namespace, io_spec)
+                            else:
+                                run_apps_stdin_cases(candidate_source, io_spec)
+                            queue.put({"passed": True, "failure_type": None, "error": None, "source_mode": source_name})
+                            return
+                        except Exception as exc:  # noqa: BLE001
+                            errors.append((source_name, exc, traceback.format_exc(limit=2)))
+                finally:
+                    os.chdir(old_cwd)
+
+            if any(isinstance(exc, AssertionError) for _, exc, _ in errors):
+                source_name, exc, _ = next((item for item in errors if isinstance(item[1], AssertionError)), errors[-1])
+                queue.put(
+                    {
+                        "passed": False,
+                        "failure_type": "logic_error",
+                        "error": f"{source_name}: {exc}",
+                        "safe_diagnostics": {"diagnostic_kind": "wrong_output"},
+                    }
+                )
+            elif all(isinstance(exc, SyntaxError) for _, exc, _ in errors):
+                source_name, exc, _ = errors[-1]
+                queue.put({"passed": False, "failure_type": "syntax_error", "error": f"{source_name}: {exc}"})
+            else:
+                source_name, exc, tb = errors[-1]
+                queue.put(
+                    {
+                        "passed": False,
+                        "failure_type": "runtime_error",
+                        "error": f"{source_name}: {type(exc).__name__}: {exc}",
+                        "traceback": tb,
+                        "safe_diagnostics": {
+                            "diagnostic_kind": "runtime_error",
+                            "exception_type": type(exc).__name__,
+                        },
                     }
                 )
             return
@@ -326,7 +622,7 @@ def run_code(row: dict, code: str, queue: mp.Queue) -> None:
         )
 
 
-def evaluate_one(row: dict, timeout: float) -> dict:
+def evaluate_one(row: dict, timeout: float, start_method: str = "spawn") -> dict:
     code = extract_code(row.get("generated_code", ""))
     if not code:
         return {
@@ -337,8 +633,9 @@ def evaluate_one(row: dict, timeout: float) -> dict:
             "error": "empty output",
         }
 
-    queue: mp.Queue = mp.Queue()
-    process = mp.Process(target=run_code, args=(row, code, queue))
+    ctx = mp.get_context(start_method)
+    queue: mp.Queue = ctx.Queue()
+    process = ctx.Process(target=run_code, args=(row, code, queue))
     process.start()
     process.join(timeout)
     if process.is_alive():
@@ -355,6 +652,7 @@ def evaluate_one(row: dict, timeout: float) -> dict:
         "passed": result["passed"],
         "failure_type": result.get("failure_type"),
         "error": result.get("error"),
+        "source_mode": result.get("source_mode"),
         "safe_diagnostics": result.get("safe_diagnostics"),
         "private_diagnostics": result.get("private_diagnostics"),
     }
@@ -365,17 +663,34 @@ def main() -> None:
     parser.add_argument("--input", type=Path, default=Path("data/responses/vllm_smoke_responses.jsonl"))
     parser.add_argument("--output", type=Path, default=Path("data/responses/vllm_smoke_labeled.jsonl"))
     parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument("--workers", type=int, default=1, help="Number of rows to verify concurrently.")
+    parser.add_argument(
+        "--process-start-method",
+        choices=("spawn", "fork", "forkserver"),
+        default="spawn",
+        help="Subprocess start method for per-response execution. spawn avoids fork-from-thread deadlocks.",
+    )
     args = parser.parse_args()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    rows = list(read_jsonl(args.input))
     total = 0
     passed = 0
     with args.output.open("w", encoding="utf-8") as f:
-        for row in read_jsonl(args.input):
-            result = evaluate_one(row, args.timeout)
-            total += 1
-            passed += int(bool(result.get("passed")))
-            f.write(json.dumps(result, ensure_ascii=False) + "\n")
+        if args.workers <= 1:
+            iterator = (evaluate_one(row, args.timeout, args.process_start_method) for row in rows)
+            for result in iterator:
+                total += 1
+                passed += int(bool(result.get("passed")))
+                f.write(json.dumps(result, ensure_ascii=False) + "\n")
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+                futures = [executor.submit(evaluate_one, row, args.timeout, args.process_start_method) for row in rows]
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    total += 1
+                    passed += int(bool(result.get("passed")))
+                    f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
     print(f"evaluated {total} responses, passed={passed}, failed={total - passed}")
     print(f"wrote labels to {args.output}")
