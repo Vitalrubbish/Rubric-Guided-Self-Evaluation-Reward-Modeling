@@ -120,6 +120,10 @@ def rank_generated(row: dict[str, Any]) -> tuple[int, int, int, str]:
     return (finish_penalty, note_penalty, token_count, str(row.get("response_id") or ""))
 
 
+def generated_token_count(row: dict[str, Any]) -> int:
+    return int(row.get("method2_generated_token_count") or row.get("generated_token_count") or 0)
+
+
 def build_generated_row(
     base_row: dict[str, Any],
     generated_row: dict[str, Any],
@@ -168,6 +172,14 @@ def main() -> None:
     parser.add_argument("--summary-output", type=Path, required=True)
     parser.add_argument("--max-generated-per-id", type=int, default=1)
     parser.add_argument("--max-generated-total", type=int, default=None)
+    parser.add_argument(
+        "--require-finish-reason",
+        action="append",
+        default=[],
+        help="Only keep generated repairs with this finish_reason. May be passed more than once.",
+    )
+    parser.add_argument("--max-generated-tokens", type=int, default=None)
+    parser.add_argument("--max-extraction-notes", type=int, default=None)
     parser.add_argument("--findings-count", type=int, default=2)
     parser.add_argument("--source-tag", default="method2_v0_4_self_generated_pass")
     parser.add_argument("--allow-empty-generated", action="store_true")
@@ -177,6 +189,11 @@ def main() -> None:
         raise ValueError("--max-generated-per-id must be at least 1")
     if args.findings_count < 1:
         raise ValueError("--findings-count must be at least 1")
+    required_finish_reasons = {str(value) for value in args.require_finish_reason}
+    if args.max_generated_tokens is not None and args.max_generated_tokens < 1:
+        raise ValueError("--max-generated-tokens must be positive")
+    if args.max_extraction_notes is not None and args.max_extraction_notes < 0:
+        raise ValueError("--max-extraction-notes cannot be negative")
 
     base_rows = read_jsonl(args.base_sft)
     generated_rows = read_jsonl(args.generated_labeled)
@@ -205,6 +222,18 @@ def main() -> None:
             continue
         if row.get("method2_extraction_status") != "ok":
             counts[f"skipped:bad_extraction:{row.get('method2_extraction_status') or 'unknown'}"] += 1
+            continue
+        finish_reason = str(row.get("finish_reason") or "unknown")
+        if required_finish_reasons and finish_reason not in required_finish_reasons:
+            counts[f"skipped:finish_reason:{finish_reason}"] += 1
+            continue
+        token_count = generated_token_count(row)
+        if args.max_generated_tokens is not None and token_count > args.max_generated_tokens:
+            counts["skipped:generated_tokens_too_high"] += 1
+            continue
+        extraction_notes = row.get("method2_extraction_notes") or []
+        if args.max_extraction_notes is not None and len(extraction_notes) > args.max_extraction_notes:
+            counts["skipped:too_many_extraction_notes"] += 1
             continue
         code = normalize_code(row.get("generated_code"))
         if not code:
@@ -267,6 +296,9 @@ def main() -> None:
         "generated_io_mode_counts": dict(Counter(str(row.get("io_mode") or "unknown") for row in accepted_labeled_rows)),
         "max_generated_per_id": args.max_generated_per_id,
         "max_generated_total": args.max_generated_total,
+        "required_finish_reasons": sorted(required_finish_reasons),
+        "max_generated_tokens": args.max_generated_tokens,
+        "max_extraction_notes": args.max_extraction_notes,
         "counts": dict(counts),
         "policy": {
             "route": "Method 2 iterative self-play repair",

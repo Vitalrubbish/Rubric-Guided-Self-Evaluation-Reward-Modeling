@@ -36,6 +36,7 @@ So v0.3 remains the best checkpoint for gate pass rate. v0.4 is important as a w
 - `03-v0-2-end-marker-failure.md`: explicit `END_REVISED_CODE` failed by causing early empty outputs.
 - `04-v0-3-no-end-marker-best.md`: current best repair gate result.
 - `05-v0-4-iterative-selfplay.md`: iterative self-generated repair loop result.
+- `06-v0-5-selective-stop50.md`: small stop-finished self-play data mixing canary.
 
 Planning notes and superseded intermediate notes are under `docs/method2/archive/`.
 
@@ -85,3 +86,11 @@ The next useful work is selective self-play data mixing:
 - avoid generated rows with `finish=length`;
 - try small canaries with `MAX_GENERATED_TOTAL=50` or `100`;
 - target prompts or failure families that v0.3 still misses.
+
+Current selective canary:
+
+```bash
+scripts/method2/build_method2_apps_self_play_sft_v0_5_stop50.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_critic_repair_sft_v0_5_stop50.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_repair_gate_v0_5_stop50.sh
+```

@@ -16,9 +16,19 @@ BUILD_ARGS=(
   --accepted-output "${ACCEPTED_OUTPUT:-data/self_play/method2_apps_self_play_v0_4_accepted_self_generated.jsonl}"
   --summary-output "${SUMMARY_OUTPUT:-data/self_play/method2_apps_self_play_v0_4_iterative_summary.json}"
   --max-generated-per-id "${MAX_GENERATED_PER_ID:-1}"
+  --source-tag "${SOURCE_TAG:-method2_v0_4_self_generated_pass}"
 )
 if [[ -n "${MAX_GENERATED_TOTAL:-}" ]]; then
   BUILD_ARGS+=(--max-generated-total "$MAX_GENERATED_TOTAL")
+fi
+if [[ -n "${REQUIRE_FINISH_REASON:-}" ]]; then
+  BUILD_ARGS+=(--require-finish-reason "$REQUIRE_FINISH_REASON")
+fi
+if [[ -n "${MAX_GENERATED_TOKENS:-}" ]]; then
+  BUILD_ARGS+=(--max-generated-tokens "$MAX_GENERATED_TOKENS")
+fi
+if [[ -n "${MAX_EXTRACTION_NOTES:-}" ]]; then
+  BUILD_ARGS+=(--max-extraction-notes "$MAX_EXTRACTION_NOTES")
 fi
 
 "${BUILD_ARGS[@]}"
