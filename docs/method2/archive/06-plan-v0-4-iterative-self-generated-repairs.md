@@ -41,7 +41,7 @@ New v0.4 builder:
 Generate and verify v0.3 train candidates:
 
 ```bash
-GPU=1 scripts/run_method2_apps_self_play_generate_train_candidates_v0_4.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_generate_train_candidates_v0_4.sh
 ```
 
 Defaults:
@@ -59,19 +59,19 @@ Defaults:
 Build v0.4 SFT:
 
 ```bash
-scripts/build_method2_apps_self_play_sft_v0_4_iterative.sh
+scripts/method2/build_method2_apps_self_play_sft_v0_4_iterative.sh
 ```
 
 Train v0.4:
 
 ```bash
-GPU=1 scripts/run_method2_apps_self_play_critic_repair_sft_v0_4_iterative.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_critic_repair_sft_v0_4_iterative.sh
 ```
 
 Evaluate v0.4 on the same repair gate:
 
 ```bash
-GPU=1 scripts/run_method2_apps_self_play_repair_gate_v0_4_iterative.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_repair_gate_v0_4_iterative.sh
 ```
 
 ## Expected Outputs

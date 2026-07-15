@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+cd "$ROOT_DIR"
+
+PAIRS=data/preferences/apps_simple_method1_self_repair_semantic_fenced_canary_dpo_v2.jsonl
+EXPECTED_SHA256=385fe020847ad530bbea213f61c9ce31dfd2263222771d04c4e788ba0eadf507
+ACTUAL_SHA256=$(sha256sum "$PAIRS" | awk '{print $1}')
+if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+  echo "semantic canary dataset hash mismatch: $ACTUAL_SHA256" >&2
+  exit 1
+fi
+
+export PAIRS
+export OUTPUT_DIR=outputs/apps_simple_method1_dpo_v2_mixed_sft_canary_lora_v5
+export BASE_RESPONSES=data/responses/apps_simple_method1_dpo_dev_v2_base_greedy_rep105.jsonl
+export DEV_RESPONSES=data/responses/apps_simple_method1_dpo_v2_mixed_sft_canary_v5_rep105_dev.jsonl
+export PAIRED_BASE_LABELED=data/responses/apps_simple_method1_dpo_dev_v2_base_greedy_rep105_mixed_sft_v5_paired30_labeled.jsonl
+export DEV_LABELED=data/responses/apps_simple_method1_dpo_v2_mixed_sft_canary_v5_rep105_dev_paired30_labeled.jsonl
+export PAIRED_VERIFY_MANIFEST=data/eval/apps_simple_method1_dpo_v2_mixed_sft_canary_v5_rep105_paired30_manifest.json
+export DEV_SUMMARY=data/eval/apps_simple_method1_dpo_v2_mixed_sft_canary_v5_rep105_dev_summary.json
+export DEV_REPORT=docs/method1/17-apps-dpo-v2-mixed-sft-canary-v5-rep105-results.md
+export GPU=2
+export MAX_PAIRS=400
+export MAX_LENGTH=3072
+export EPOCHS=1
+export LEARNING_RATE=5e-7
+export BETA=0.2
+export LD_ALPHA=1.0
+export LOSS_TYPES=sigmoid,sft
+export LOSS_WEIGHTS=1.0,0.2
+export REPETITION_PENALTY=1.05
+export SAVE_STEPS=10
+export VERIFY_TIMEOUT=30
+export VERIFY_WORKERS=4
+
+exec bash scripts/method1/run_method1_apps_dpo_v2_canary.sh

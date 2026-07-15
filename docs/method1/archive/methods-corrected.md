@@ -138,8 +138,8 @@ The repository should keep:
 ```text
 src/evaluator/build_generative_evaluator_sft_data.py
 src/training/train_causallm_sft_lora.py
-scripts/build_method1_apps_generative_evaluator_sft_v1.sh
-scripts/run_method1_apps_generative_evaluator_sft_v1.sh
+scripts/method1/build_method1_apps_generative_evaluator_sft_v1.sh
+scripts/method1/run_method1_apps_generative_evaluator_sft_v1.sh
 ```
 
 The classification-head route should be removed from active implementation and

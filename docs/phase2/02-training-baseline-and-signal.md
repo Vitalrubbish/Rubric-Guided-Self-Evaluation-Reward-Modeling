@@ -37,7 +37,7 @@ Full test metrics:
 Run entrypoint:
 
 ```bash
-scripts/run_phase2_hitl_v3_judge.sh
+scripts/phase2/run_phase2_hitl_v3_judge.sh
 ```
 
 ## Training Signal: v5-Lite Failures
@@ -56,7 +56,7 @@ Full test metrics:
 Run entrypoint:
 
 ```bash
-scripts/run_phase2_hitl_v5_lite_failures_judge.sh
+scripts/phase2/run_phase2_hitl_v5_lite_failures_judge.sh
 ```
 
 ## Reporting Rule

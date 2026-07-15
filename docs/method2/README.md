@@ -44,34 +44,34 @@ Planning notes and superseded intermediate notes are under `docs/method2/archive
 Build v0.3 data:
 
 ```bash
-scripts/build_method2_apps_self_play_bootstrap_v0_3_no_end_marker.sh
+scripts/method2/build_method2_apps_self_play_bootstrap_v0_3_no_end_marker.sh
 ```
 
 Train v0.3:
 
 ```bash
-GPU=1 scripts/run_method2_apps_self_play_critic_repair_sft_v0_3_no_end_marker.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_critic_repair_sft_v0_3_no_end_marker.sh
 ```
 
 Evaluate v0.3:
 
 ```bash
-GPU=1 scripts/run_method2_apps_self_play_repair_gate_v0_3_no_end_marker.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_repair_gate_v0_3_no_end_marker.sh
 ```
 
 Run the v0.4 iterative loop:
 
 ```bash
-GPU=1 scripts/run_method2_apps_self_play_generate_train_candidates_v0_4.sh
-scripts/build_method2_apps_self_play_sft_v0_4_iterative.sh
-GPU=1 scripts/run_method2_apps_self_play_critic_repair_sft_v0_4_iterative.sh
-GPU=1 scripts/run_method2_apps_self_play_repair_gate_v0_4_iterative.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_generate_train_candidates_v0_4.sh
+scripts/method2/build_method2_apps_self_play_sft_v0_4_iterative.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_critic_repair_sft_v0_4_iterative.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_repair_gate_v0_4_iterative.sh
 ```
 
 Or run the wrapper:
 
 ```bash
-GPU=1 scripts/run_method2_apps_self_play_v0_4_iterative_full.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_v0_4_iterative_full.sh
 ```
 
 ## Next Direction

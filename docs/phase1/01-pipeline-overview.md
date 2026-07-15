@@ -33,7 +33,7 @@ Training, self-play, math/GSM8K transfer, revision, preference-building, and fin
 Use the pipeline runner from the repository root:
 
 ```bash
-SKIP_EXISTING=1 GPU=2 scripts/run_phase1_pipeline.sh
+SKIP_EXISTING=1 GPU=2 scripts/phase1/run_phase1_pipeline.sh
 ```
 
 Useful environment variables:
@@ -53,7 +53,7 @@ Useful environment variables:
 For a command preview:
 
 ```bash
-DRY_RUN=1 scripts/run_phase1_pipeline.sh
+DRY_RUN=1 scripts/phase1/run_phase1_pipeline.sh
 ```
 
 ## Core Pipeline
@@ -101,7 +101,7 @@ The runner can also produce reporting artifacts and a static rubric sanity check
 For the simplified core run:
 
 ```bash
-RUN_REPORTS=0 RUN_STATIC_BASELINE=0 SKIP_EXISTING=1 GPU=2 scripts/run_phase1_pipeline.sh
+RUN_REPORTS=0 RUN_STATIC_BASELINE=0 SKIP_EXISTING=1 GPU=2 scripts/phase1/run_phase1_pipeline.sh
 ```
 
 ## Core Outputs

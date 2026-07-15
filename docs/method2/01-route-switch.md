@@ -47,7 +47,7 @@ degrade into generic solver imitation.
 Build with:
 
 ```bash
-scripts/build_method2_apps_self_play_bootstrap_v0_1_clean.sh
+scripts/method2/build_method2_apps_self_play_bootstrap_v0_1_clean.sh
 ```
 
 Outputs:

@@ -3,10 +3,10 @@
 ## Commands Run
 
 ```bash
-GPU=1 scripts/run_method2_apps_self_play_generate_train_candidates_v0_4.sh
-scripts/build_method2_apps_self_play_sft_v0_4_iterative.sh
-GPU=1 scripts/run_method2_apps_self_play_critic_repair_sft_v0_4_iterative.sh
-GPU=1 scripts/run_method2_apps_self_play_repair_gate_v0_4_iterative.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_generate_train_candidates_v0_4.sh
+scripts/method2/build_method2_apps_self_play_sft_v0_4_iterative.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_critic_repair_sft_v0_4_iterative.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_repair_gate_v0_4_iterative.sh
 ```
 
 ## Candidate Generation

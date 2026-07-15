@@ -24,7 +24,7 @@ So v0.3 removes `END_REVISED_CODE` from both training targets and generation sto
 Command:
 
 ```bash
-scripts/build_method2_apps_self_play_bootstrap_v0_3_no_end_marker.sh
+scripts/method2/build_method2_apps_self_play_bootstrap_v0_3_no_end_marker.sh
 ```
 
 Result:
@@ -55,8 +55,8 @@ This matches the v0.1 training shape closely while avoiding v0.2's early stop ta
 Run when a GPU is available:
 
 ```bash
-GPU=1 scripts/run_method2_apps_self_play_critic_repair_sft_v0_3_no_end_marker.sh
-GPU=1 scripts/run_method2_apps_self_play_repair_gate_v0_3_no_end_marker.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_critic_repair_sft_v0_3_no_end_marker.sh
+GPU=1 scripts/method2/run_method2_apps_self_play_repair_gate_v0_3_no_end_marker.sh
 ```
 
 Expected comparison target:

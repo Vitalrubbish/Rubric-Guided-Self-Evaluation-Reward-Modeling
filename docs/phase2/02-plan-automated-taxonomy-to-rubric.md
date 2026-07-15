@@ -140,7 +140,7 @@ Rubric generation is implemented in:
 
 ```text
 src/rubric/generate_llm_rubric_from_taxonomy.py
-scripts/run_phase2_rubric_generation.sh
+scripts/phase2/run_phase2_rubric_generation.sh
 ```
 
 Input:
@@ -160,13 +160,13 @@ data/rubrics/phase2/mbpp_hidden_llm_rubric_from_refined_taxonomy_raw_response.tx
 Run command:
 
 ```bash
-GPU=2 scripts/run_phase2_rubric_generation.sh
+GPU=2 scripts/phase2/run_phase2_rubric_generation.sh
 ```
 
 Use deterministic fallback for CPU-only schema debugging:
 
 ```bash
-DETERMINISTIC_ONLY=1 scripts/run_phase2_rubric_generation.sh
+DETERMINISTIC_ONLY=1 scripts/phase2/run_phase2_rubric_generation.sh
 ```
 
 Current rubric audit status:
@@ -185,14 +185,14 @@ Rubric judging is implemented in:
 
 ```text
 src/rubric/evaluate_llm_rubric_judge.py
-scripts/run_phase2_hitl_judge.sh
+scripts/phase2/run_phase2_hitl_judge.sh
 ```
 
 The active versioned entrypoints are:
 
 ```text
-scripts/run_phase2_hitl_v3_judge.sh
-scripts/run_phase2_hitl_v5_lite_failures_judge.sh
+scripts/phase2/run_phase2_hitl_v3_judge.sh
+scripts/phase2/run_phase2_hitl_v5_lite_failures_judge.sh
 ```
 
 Evaluation input:
@@ -208,7 +208,7 @@ v3 is the baseline for later RL because it measures rubric-based self-evaluation
 Run command:
 
 ```bash
-GPU=2 scripts/run_phase2_hitl_v3_judge.sh
+GPU=2 scripts/phase2/run_phase2_hitl_v3_judge.sh
 ```
 
 Full test metrics:
@@ -228,7 +228,7 @@ v5-lite failures is a verifier-failure-gated rubric judge. It is used to produce
 Run command:
 
 ```bash
-scripts/run_phase2_hitl_v5_lite_failures_judge.sh
+scripts/phase2/run_phase2_hitl_v5_lite_failures_judge.sh
 ```
 
 Full test metrics:

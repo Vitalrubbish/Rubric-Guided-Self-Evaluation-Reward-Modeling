@@ -39,7 +39,7 @@
 data/rubrics/phase2/judge_guidance_score_collapse_v3.json
 data/rubrics/phase2/mbpp_hidden_llm_rubric_hitl_v3.json
 src/rubric/evaluate_llm_rubric_judge.py
-scripts/run_phase2_hitl_v3_judge.sh
+scripts/phase2/run_phase2_hitl_v3_judge.sh
 tests/test_score_collapse_fix.py
 ```
 
