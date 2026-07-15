@@ -1,0 +1,69 @@
+{
+  "name": "apps_simple_no_gate_judge_guidance_v1",
+  "provenance": {
+    "source": "current APPS simple 9-dimension rubric",
+    "uses_private_examples_in_prompt": false,
+    "purpose": "Run a no-execution-gate baseline for visible-code self-evaluation."
+  },
+  "bad_rubric_patterns": [
+    {
+      "id": "known_error_scored_as_four",
+      "why_unreliable": "A concrete public-spec counterexample is a functional error and caps the affected semantic dimension at 2."
+    },
+    {
+      "id": "structural_scores_raise_correctness",
+      "why_unreliable": "Parseability, interface compliance, and runtime safety cannot raise the correctness score of code that solves the wrong problem."
+    },
+    {
+      "id": "uncertainty_rounded_up",
+      "why_unreliable": "When correctness cannot be established from public task text and visible code, the score is 3 and predicted_pass must be false."
+    },
+    {
+      "id": "unrelated_dimensions_in_mean",
+      "why_unreliable": "An irrelevant dimension contributes no correctness evidence. Mark it not applicable with score 3."
+    }
+  ],
+  "required_judging_sequence": [
+    "Infer the public input contract, output contract, core rule, and boundary cases from the prompt.",
+    "Mark each rubric dimension applicable or not applicable before assigning scores.",
+    "Trace concrete expressions, branches, loops, return values, and operand types against the public contract.",
+    "Try to construct at least one ordinary or boundary counterexample for every applicable semantic dimension.",
+    "List any major visible-code errors before scoring.",
+    "Predict pass only when every applicable semantic dimension is at least 4 and no critical gate fails."
+  ],
+  "score_policy": {
+    "1": "Invalid, unusable, unrelated, or ordinary-case core failure.",
+    "2": "A visible public-spec input leads to wrong value, wrong type or shape, exception, nontermination, or contract violation.",
+    "3": "Partially justified or materially unresolved. Score 3 is not a pass for an applicable semantic dimension.",
+    "4": "No counterexample is found and the code trace mostly supports the public contract, with only narrow residual risk.",
+    "5": "The implementation is justified by code-specific evidence for the core rule and relevant boundaries.",
+    "not_applicable": "Set applicable=false and score=3."
+  },
+  "critical_policy": {
+    "semantic_dimension_ids": [
+      "numeric_formula_arithmetic_error",
+      "sequence_collection_transformation_error",
+      "predicate_branch_condition_error",
+      "edge_case_handling",
+      "output_type_or_container_shape",
+      "string_regex_pattern_logic"
+    ],
+    "critical_dimension_ids": [
+      "syntax_parseability_truncation",
+      "runtime_api_type_misuse",
+      "interface_name_signature_mismatch"
+    ],
+    "decision_rule": "Pass only when every applicable semantic score is at least 4, every critical gate is at least 3, no major or fatal error exists, and the model did not explicitly reject."
+  },
+  "aggregation_policy": {
+    "primary_reward": "minimum applicable semantic score for correctness-sensitive reporting",
+    "secondary_diagnostic": "mean applicable score",
+    "forbidden": "Do not use structural scores to compensate for semantic wrongness."
+  },
+  "good_judgment_requirements": [
+    "A score of 2 names code-specific evidence for the failure.",
+    "A score of 3 states what remains unresolved and does not predict pass.",
+    "A score of 4 or 5 cites visible-code evidence rather than paraphrasing the rubric.",
+    "Correct concise code should be accepted when the invariant is clear; verbosity is not rewarded."
+  ]
+}
