@@ -1,7 +1,7 @@
 # Strategy v2: Executable Rubrics — Self-Generated Tests As The Reward Signal
 
 Date: 2026-07-26
-Status: proposed main line, pending the test-quality probe (Section 5)
+Status: probe expanded; training blocked by executable-rubric coverage/precision (Section 8)
 Supersedes: natural-language rubric routes (falsified at 7B and 32B)
 
 ## 1. Core Goal (unchanged)
@@ -125,6 +125,8 @@ Results:
 | old gate200 min2 candidate-aware suites | 44 | 98/200 (49.0%) | 91/200 (45.5%) | 116/200 (58.0%) | 0.015625 | 0.532 |
 | old+K5 expanded min2 suites | 79 | 104/200 (52.0%) | 91/200 (45.5%) | 116/200 (58.0%) | 0.000244 | 0.626 |
 | old+K5 expanded min3 suites | 60 | 102/200 (51.0%) | 91/200 (45.5%) | 116/200 (58.0%) | 0.000977 | 0.558 |
+| + no-suite targeted min2 expansion | 79 | 104/200 (52.0%) | 91/200 (45.5%) | 116/200 (58.0%) | 0.000244 | 0.626 |
+| + with-suite hardening min2 expansion | 79 | 104/200 (52.0%) | 91/200 (45.5%) | 116/200 (58.0%) | 0.000244 | 0.627 |
 
 Interpretation:
 
@@ -136,10 +138,21 @@ Interpretation:
   (72/121 selected, oracle 82/121);
 - candidate-level pass precision is still only 0.626, below the ~0.80
   threshold for using this as a mainline reward/training signal.
+- the no-suite targeted expansion generated 548 additional candidate-
+  aware attempts, but 0/548 passed the quality gate. The selected inputs
+  contained 194 verifier-failing candidates, so this is not just a
+  true-pass sampling artifact; without any existing tests, the current
+  prompt usually fails to derive checks that falsify these hard wrong
+  candidates;
+- a smaller with-suite hardening pass over the 80 still-predicted-pass
+  covered candidates added only 2 quality-gated suites. It rejected two
+  extra false-positive candidates (candidate precision 0.6256 -> 0.6274)
+  but did not change the problem-level selected pass rate.
 
-Decision: do not start training yet. The next evaluation step is another
-coverage-targeted candidate-aware testgen pass over the remaining
-no-suite predicted-pass candidates, using the validated faster vLLM
-configuration (`max_model_len=3072`, `prompt_batch_size=16`,
-`gpu_memory_utilization=0.35` on A800 80GB with the current shared GPU
-load).
+Decision: do not start training yet. The ranking signal is real on
+covered problems, but the executable-rubric library is too sparse and
+too low-precision to be trusted as a reward. The next evaluation step is
+not more volume with the same prompt; it is a stronger test-generation
+variant that can bootstrap no-suite problems, likely by adding
+spec-decomposition/error-hypothesis scaffolding before asking for JSON
+tests, then re-running the same gate200 K=5 scorer.
