@@ -51,7 +51,7 @@ def suite_rank(row: dict[str, Any]) -> tuple[int, int, str]:
     )
 
 
-def select_suites(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def quality_gated_suites_by_problem(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     by_problem: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         if not row.get("quality_gate_passed"):
@@ -59,6 +59,43 @@ def select_suites(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         pid = problem_id(row)
         if pid:
             by_problem[pid].append(row)
+    return by_problem
+
+
+def merge_suites(pid: str, suites: list[dict[str, Any]]) -> dict[str, Any]:
+    ordered = sorted(suites, key=suite_rank, reverse=True)
+    merged_tests: list[dict[str, Any]] = []
+    seen_tests: set[str] = set()
+    fn_name = ""
+    source_response_ids = []
+    for suite in ordered:
+        if not fn_name:
+            fn_name = str(suite.get("fn_name") or "")
+        source_response_ids.append(str(suite.get("response_id") or suite.get("id") or ""))
+        for test in suite.get("tests") or []:
+            key = json.dumps(test, sort_keys=True, ensure_ascii=False)
+            if key in seen_tests:
+                continue
+            seen_tests.add(key)
+            merged_tests.append(test)
+    return {
+        "problem_id": pid,
+        "response_id": f"{pid}__union_{len(ordered)}_suites",
+        "fn_name": fn_name,
+        "tests": merged_tests,
+        "test_count": len(merged_tests),
+        "quality_gate_passed": bool(merged_tests),
+        "source_suite_count": len(ordered),
+        "source_suite_response_ids": source_response_ids,
+    }
+
+
+def select_suites(rows: list[dict[str, Any]], aggregation: str = "best") -> dict[str, dict[str, Any]]:
+    by_problem = quality_gated_suites_by_problem(rows)
+    if aggregation == "union":
+        return {pid: merge_suites(pid, suites) for pid, suites in by_problem.items()}
+    if aggregation != "best":
+        raise ValueError(f"unsupported suite aggregation: {aggregation}")
     return {pid: sorted(suites, key=suite_rank, reverse=True)[0] for pid, suites in by_problem.items()}
 
 
@@ -188,13 +225,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("data/self_play/executable_rubric_candidate_scores.jsonl"))
     parser.add_argument("--summary-output", type=Path, default=Path("data/self_play/executable_rubric_candidate_scores_summary.json"))
     parser.add_argument("--selected-output", type=Path, default=Path("data/self_play/executable_rubric_selected_candidates.jsonl"))
+    parser.add_argument(
+        "--suite-aggregation",
+        choices=("best", "union"),
+        default="best",
+        help="How to use multiple quality-gated suites for one problem.",
+    )
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
 
     suite_rows: list[dict[str, Any]] = []
     for suite_path in args.suites:
         suite_rows.extend(read_jsonl(suite_path))
-    suites = select_suites(suite_rows)
+    suites = select_suites(suite_rows, aggregation=args.suite_aggregation)
     candidates = read_jsonl(args.candidates)
     output_rows: list[dict[str, Any]] = []
     counts: Counter[str] = Counter()
@@ -223,6 +266,7 @@ def main() -> None:
         "output_sha256": sha256_file(args.output),
         "selected_output": str(args.selected_output),
         "selected_output_sha256": sha256_file(args.selected_output),
+        "suite_aggregation": args.suite_aggregation,
         "usable_suite_count": len(suites),
         "candidate_rows_input": len(candidates),
         "candidate_rows_scored": len(output_rows),
@@ -233,7 +277,11 @@ def main() -> None:
         "selection": selection_report(output_rows),
         "counts": dict(counts),
         "policy": {
-            "suite_selection": "one quality-gated suite per problem; prefer more tests, then deterministic response id",
+            "suite_selection": (
+                "merge all quality-gated suites per problem with exact test de-duplication"
+                if args.suite_aggregation == "union"
+                else "one quality-gated suite per problem; prefer more tests, then deterministic response id"
+            ),
             "candidate_prediction": "candidate passes executable rubric only if all self-written tests pass",
             "hidden_labels": "candidate .passed is used only for reporting, never for selecting by tests",
         },

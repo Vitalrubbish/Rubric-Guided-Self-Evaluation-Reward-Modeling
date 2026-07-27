@@ -4,7 +4,7 @@ import unittest
 
 from src.self_play.executable_rubric_utils import all_passed, execute_function_tests
 from src.self_play.extract_executable_rubric_tests import evaluate_generation, parse_tests
-from src.self_play.score_executable_rubric_tests import confusion, score_candidate
+from src.self_play.score_executable_rubric_tests import confusion, score_candidate, select_suites
 
 
 class ExecutableRubricUtilsTests(unittest.TestCase):
@@ -113,6 +113,44 @@ JSON: {"args": [5], "expected": 6}
 
 
 class ExecutableRubricScoringTests(unittest.TestCase):
+    def test_select_suites_supports_best_and_union_aggregation(self) -> None:
+        rows = [
+            {
+                "problem_id": "apps/train/1",
+                "response_id": "suite-a",
+                "quality_gate_passed": True,
+                "fn_name": "solve",
+                "test_count": 1,
+                "tests": [{"args": [1], "expected": 2}],
+            },
+            {
+                "problem_id": "apps/train/1",
+                "response_id": "suite-b",
+                "quality_gate_passed": True,
+                "fn_name": "solve",
+                "test_count": 2,
+                "tests": [{"args": [1], "expected": 2}, {"args": [5], "expected": 6}],
+            },
+            {
+                "problem_id": "apps/train/1",
+                "response_id": "suite-c",
+                "quality_gate_passed": False,
+                "fn_name": "solve",
+                "test_count": 1,
+                "tests": [{"args": [10], "expected": 11}],
+            },
+        ]
+
+        best = select_suites(rows)
+        union = select_suites(rows, aggregation="union")
+
+        self.assertEqual(best["apps/train/1"]["response_id"], "suite-b")
+        self.assertEqual(
+            union["apps/train/1"]["tests"],
+            [{"args": [1], "expected": 2}, {"args": [5], "expected": 6}],
+        )
+        self.assertEqual(union["apps/train/1"]["source_suite_count"], 2)
+
     def test_score_candidate_and_confusion(self) -> None:
         suite = {
             "problem_id": "apps/train/1",
