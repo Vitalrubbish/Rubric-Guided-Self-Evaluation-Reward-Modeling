@@ -2,9 +2,24 @@ from __future__ import annotations
 
 import unittest
 
+from src.self_play.build_executable_rubric_probe_input import extract_public_prompt
 from src.self_play.executable_rubric_utils import all_passed, execute_function_tests
 from src.self_play.extract_executable_rubric_tests import evaluate_generation, parse_tests
 from src.self_play.score_executable_rubric_tests import confusion, score_candidate, select_suites
+
+
+class ExecutableRubricInputTests(unittest.TestCase):
+    def test_extract_public_prompt_stops_before_visible_suspect_code(self) -> None:
+        prompt = (
+            "Header\n"
+            "Public task prompt:\n"
+            "Solve the task.\n\n"
+            "Visible suspect code:\n"
+            "def solve():\n"
+            "    return None\n"
+        )
+
+        self.assertEqual(extract_public_prompt(prompt), "Solve the task.")
 
 
 class ExecutableRubricUtilsTests(unittest.TestCase):

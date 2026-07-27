@@ -33,8 +33,9 @@ def extract_public_prompt(prompt: str) -> str:
     marker = "Public task prompt:\n"
     if marker in prompt:
         tail = prompt.split(marker, 1)[1]
-        if "\n\nPrevious failed code:" in tail:
-            tail = tail.split("\n\nPrevious failed code:", 1)[0]
+        for stop_marker in ("\n\nPrevious failed code:", "\n\nVisible failed code:", "\n\nVisible suspect code:"):
+            if stop_marker in tail:
+                tail = tail.split(stop_marker, 1)[0]
         return tail.strip()
     return prompt.strip()
 
