@@ -109,6 +109,7 @@ def score_candidate(candidate: dict[str, Any], suite: dict[str, Any], timeout: f
     return {
         "id": candidate.get("id"),
         "response_id": candidate.get("response_id"),
+        "sample_id": candidate.get("sample_id"),
         "problem_id": problem_id(candidate),
         "generated_code": candidate.get("generated_code"),
         "extracted_code": candidate.get("extracted_code"),
@@ -129,6 +130,7 @@ def score_candidate_without_suite(candidate: dict[str, Any], predicted_pass: boo
     return {
         "id": candidate.get("id"),
         "response_id": candidate.get("response_id"),
+        "sample_id": candidate.get("sample_id"),
         "problem_id": problem_id(candidate),
         "generated_code": candidate.get("generated_code"),
         "extracted_code": candidate.get("extracted_code"),
@@ -142,6 +144,27 @@ def score_candidate_without_suite(candidate: dict[str, Any], predicted_pass: boo
         "test_score": 1.0 if predicted_pass else 0.0,
         "predicted_pass_by_tests": predicted_pass,
         "test_execution_result": {"status": "no_suite"},
+    }
+
+
+def score_empty_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": candidate.get("id"),
+        "response_id": candidate.get("response_id"),
+        "sample_id": candidate.get("sample_id"),
+        "problem_id": problem_id(candidate),
+        "generated_code": candidate.get("generated_code"),
+        "extracted_code": candidate.get("extracted_code"),
+        "gold_passed": bool(candidate.get("passed")),
+        "passed": bool(candidate.get("passed")),
+        "gold_failure_type": candidate.get("failure_type"),
+        "failure_type": candidate.get("failure_type"),
+        "suite_response_id": None,
+        "test_count": 0,
+        "test_pass_count": 0,
+        "test_score": 0.0,
+        "predicted_pass_by_tests": False,
+        "test_execution_result": {"status": "empty_candidate_code"},
     }
 
 
@@ -257,6 +280,12 @@ def main() -> None:
         default="skip",
         help="How to score candidates with no quality-gated suite.",
     )
+    parser.add_argument(
+        "--empty-candidate-policy",
+        choices=("skip", "fail"),
+        default="skip",
+        help="How to handle candidates with no extracted/generated code.",
+    )
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
 
@@ -270,7 +299,11 @@ def main() -> None:
     for candidate in candidates:
         pid = problem_id(candidate)
         if not candidate_code(candidate):
-            counts["skipped:empty_candidate_code"] += 1
+            if args.empty_candidate_policy == "skip":
+                counts["skipped:empty_candidate_code"] += 1
+                continue
+            output_rows.append(score_empty_candidate(candidate))
+            counts["scored:empty_candidate_as_fail"] += 1
             continue
         suite = suites.get(pid)
         if suite is None:
@@ -298,6 +331,7 @@ def main() -> None:
         "selected_output_sha256": sha256_file(args.selected_output),
         "suite_aggregation": args.suite_aggregation,
         "no_suite_policy": args.no_suite_policy,
+        "empty_candidate_policy": args.empty_candidate_policy,
         "usable_suite_count": len(suites),
         "candidate_rows_input": len(candidates),
         "candidate_rows_scored": len(output_rows),
@@ -316,6 +350,7 @@ def main() -> None:
             "candidate_prediction": "candidate passes executable rubric only if all self-written tests pass",
             "hidden_labels": "candidate .passed is used only for reporting, never for selecting by tests",
             "no_suite_policy": args.no_suite_policy,
+            "empty_candidate_policy": args.empty_candidate_policy,
         },
     }
     write_json(args.summary_output, summary)

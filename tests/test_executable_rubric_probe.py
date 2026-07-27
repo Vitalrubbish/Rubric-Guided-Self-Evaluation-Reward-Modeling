@@ -5,7 +5,13 @@ import unittest
 from src.self_play.build_executable_rubric_probe_input import extract_public_prompt
 from src.self_play.executable_rubric_utils import all_passed, execute_function_tests
 from src.self_play.extract_executable_rubric_tests import evaluate_generation, parse_tests
-from src.self_play.score_executable_rubric_tests import confusion, score_candidate, score_candidate_without_suite, select_suites
+from src.self_play.score_executable_rubric_tests import (
+    confusion,
+    score_candidate,
+    score_candidate_without_suite,
+    score_empty_candidate,
+    select_suites,
+)
 
 
 class ExecutableRubricInputTests(unittest.TestCase):
@@ -160,6 +166,22 @@ class ExecutableRubricScoringTests(unittest.TestCase):
         self.assertTrue(scored["predicted_pass_by_tests"])
         self.assertEqual(scored["test_count"], 0)
         self.assertEqual(scored["test_execution_result"], {"status": "no_suite"})
+
+    def test_score_empty_candidate_counts_as_failure_when_requested(self) -> None:
+        candidate = {
+            "id": "apps/train/1",
+            "response_id": "candidate-empty",
+            "problem_id": "apps/train/1",
+            "passed": False,
+            "failure_type": "generation_failure",
+            "generated_code": "",
+        }
+
+        scored = score_empty_candidate(candidate)
+
+        self.assertFalse(scored["predicted_pass_by_tests"])
+        self.assertEqual(scored["test_score"], 0.0)
+        self.assertEqual(scored["test_execution_result"], {"status": "empty_candidate_code"})
 
     def test_select_suites_supports_best_and_union_aggregation(self) -> None:
         rows = [
