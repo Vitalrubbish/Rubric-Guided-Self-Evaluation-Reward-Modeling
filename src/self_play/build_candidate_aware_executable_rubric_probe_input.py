@@ -29,6 +29,8 @@ def build_source_index(source_rows: list[dict[str, Any]]) -> dict[str, dict[str,
 
 
 def existing_suite_tests(suite_paths: list[Path], aggregation: str) -> dict[str, list[dict[str, Any]]]:
+    if not suite_paths:
+        return {}
     rows: list[dict[str, Any]] = []
     for path in suite_paths:
         rows.extend(read_jsonl(path))
@@ -83,7 +85,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scores", type=Path, required=True)
     parser.add_argument("--source-input", type=Path, required=True)
-    parser.add_argument("--suites", type=Path, nargs="+", required=True)
+    parser.add_argument("--suites", type=Path, nargs="*", default=[])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--summary-output", type=Path, required=True)
     parser.add_argument("--suite-aggregation", choices=("best", "union"), default="union")
@@ -111,11 +113,17 @@ def main() -> None:
         if pid not in source_by_problem:
             counts["skipped:missing_source_row"] += 1
             continue
-        if pid not in existing_tests_by_problem:
-            counts["skipped:missing_existing_suite"] += 1
-            continue
         if not candidate_code(row):
             counts["skipped:empty_candidate_code"] += 1
+            continue
+        source = source_by_problem[pid]
+        metadata = source.get("metadata") or {}
+        fn_name = str(metadata.get("fn_name") or (source.get("interface_names") or [""])[0] or "")
+        if not fn_name:
+            counts["skipped:missing_fn_name"] += 1
+            continue
+        if not str(source.get("canonical_solution") or "").strip():
+            counts["skipped:missing_canonical_solution"] += 1
             continue
         selected_scores.append(row)
         counts["selected"] += 1

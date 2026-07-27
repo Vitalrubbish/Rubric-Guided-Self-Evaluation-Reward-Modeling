@@ -125,6 +125,26 @@ def score_candidate(candidate: dict[str, Any], suite: dict[str, Any], timeout: f
     }
 
 
+def score_candidate_without_suite(candidate: dict[str, Any], predicted_pass: bool) -> dict[str, Any]:
+    return {
+        "id": candidate.get("id"),
+        "response_id": candidate.get("response_id"),
+        "problem_id": problem_id(candidate),
+        "generated_code": candidate.get("generated_code"),
+        "extracted_code": candidate.get("extracted_code"),
+        "gold_passed": bool(candidate.get("passed")),
+        "passed": bool(candidate.get("passed")),
+        "gold_failure_type": candidate.get("failure_type"),
+        "failure_type": candidate.get("failure_type"),
+        "suite_response_id": None,
+        "test_count": 0,
+        "test_pass_count": 0,
+        "test_score": 1.0 if predicted_pass else 0.0,
+        "predicted_pass_by_tests": predicted_pass,
+        "test_execution_result": {"status": "no_suite"},
+    }
+
+
 def confusion(rows: list[dict[str, Any]]) -> dict[str, Any]:
     tp = sum(1 for row in rows if row["predicted_pass_by_tests"] and row["gold_passed"])
     fp = sum(1 for row in rows if row["predicted_pass_by_tests"] and not row["gold_passed"])
@@ -231,6 +251,12 @@ def main() -> None:
         default="best",
         help="How to use multiple quality-gated suites for one problem.",
     )
+    parser.add_argument(
+        "--no-suite-policy",
+        choices=("skip", "pass", "fail"),
+        default="skip",
+        help="How to score candidates with no quality-gated suite.",
+    )
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
 
@@ -243,12 +269,16 @@ def main() -> None:
     counts: Counter[str] = Counter()
     for candidate in candidates:
         pid = problem_id(candidate)
-        suite = suites.get(pid)
-        if suite is None:
-            counts["skipped:no_suite"] += 1
-            continue
         if not candidate_code(candidate):
             counts["skipped:empty_candidate_code"] += 1
+            continue
+        suite = suites.get(pid)
+        if suite is None:
+            if args.no_suite_policy == "skip":
+                counts["skipped:no_suite"] += 1
+                continue
+            output_rows.append(score_candidate_without_suite(candidate, predicted_pass=args.no_suite_policy == "pass"))
+            counts[f"scored:no_suite_as_{args.no_suite_policy}"] += 1
             continue
         scored = score_candidate(candidate, suite, args.timeout)
         output_rows.append(scored)
@@ -267,6 +297,7 @@ def main() -> None:
         "selected_output": str(args.selected_output),
         "selected_output_sha256": sha256_file(args.selected_output),
         "suite_aggregation": args.suite_aggregation,
+        "no_suite_policy": args.no_suite_policy,
         "usable_suite_count": len(suites),
         "candidate_rows_input": len(candidates),
         "candidate_rows_scored": len(output_rows),
@@ -284,6 +315,7 @@ def main() -> None:
             ),
             "candidate_prediction": "candidate passes executable rubric only if all self-written tests pass",
             "hidden_labels": "candidate .passed is used only for reporting, never for selecting by tests",
+            "no_suite_policy": args.no_suite_policy,
         },
     }
     write_json(args.summary_output, summary)

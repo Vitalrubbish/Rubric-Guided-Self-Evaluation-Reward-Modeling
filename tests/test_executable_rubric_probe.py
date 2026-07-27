@@ -5,7 +5,7 @@ import unittest
 from src.self_play.build_executable_rubric_probe_input import extract_public_prompt
 from src.self_play.executable_rubric_utils import all_passed, execute_function_tests
 from src.self_play.extract_executable_rubric_tests import evaluate_generation, parse_tests
-from src.self_play.score_executable_rubric_tests import confusion, score_candidate, select_suites
+from src.self_play.score_executable_rubric_tests import confusion, score_candidate, score_candidate_without_suite, select_suites
 
 
 class ExecutableRubricInputTests(unittest.TestCase):
@@ -74,6 +74,24 @@ JSON: {"args": [5], "expected": 6}
         self.assertEqual(cases, [{"args": [1], "expected": 2}, {"args": [5], "expected": 6}])
         self.assertIn("parse:json:balanced", notes)
 
+    def test_parse_tests_recovers_case_objects_from_truncated_suite(self) -> None:
+        raw = """{
+  "fn_name": "solve",
+  "tests": [
+    {"args": [1], "expected": 2},
+    {"args": [5], "expected": 6},
+    {"args": [10], "expected": 11}
+"""
+
+        cases, status, notes = parse_tests(raw, "solve", min_tests=2, max_tests=5)
+
+        self.assertEqual(status, "ok")
+        self.assertEqual(
+            cases,
+            [{"args": [1], "expected": 2}, {"args": [5], "expected": 6}, {"args": [10], "expected": 11}],
+        )
+        self.assertIn("recovered_case_objects", notes)
+
     def test_evaluate_generation_requires_canonical_pass_and_failed_code_fail(self) -> None:
         source = {
             "id": "apps/train/1__exec_rubric_testgen",
@@ -128,6 +146,21 @@ JSON: {"args": [5], "expected": 6}
 
 
 class ExecutableRubricScoringTests(unittest.TestCase):
+    def test_score_candidate_without_suite_can_model_abstention_as_pass(self) -> None:
+        candidate = {
+            "id": "apps/train/1",
+            "response_id": "candidate-pass",
+            "problem_id": "apps/train/1",
+            "passed": True,
+            "generated_code": "def solve(x):\n    return x + 1\n",
+        }
+
+        scored = score_candidate_without_suite(candidate, predicted_pass=True)
+
+        self.assertTrue(scored["predicted_pass_by_tests"])
+        self.assertEqual(scored["test_count"], 0)
+        self.assertEqual(scored["test_execution_result"], {"status": "no_suite"})
+
     def test_select_suites_supports_best_and_union_aggregation(self) -> None:
         rows = [
             {

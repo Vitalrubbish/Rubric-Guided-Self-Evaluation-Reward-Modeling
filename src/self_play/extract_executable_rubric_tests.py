@@ -56,6 +56,36 @@ def balanced_object_candidates(text: str) -> list[str]:
     return candidates
 
 
+def balanced_object_candidates_deep(text: str) -> list[str]:
+    candidates: list[str] = []
+    for start, char in enumerate(text):
+        if char != "{":
+            continue
+        depth = 0
+        in_string = False
+        escape = False
+        for index in range(start, len(text)):
+            current = text[index]
+            if in_string:
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif current == '"':
+                    in_string = False
+                continue
+            if current == '"':
+                in_string = True
+            elif current == "{":
+                depth += 1
+            elif current == "}" and depth:
+                depth -= 1
+                if depth == 0:
+                    candidates.append(text[start : index + 1])
+                    break
+    return candidates
+
+
 def parse_object_candidate(candidate: str) -> tuple[dict[str, Any] | None, str]:
     try:
         parsed = json.loads(candidate)
@@ -104,6 +134,31 @@ def extract_json_object(text: str) -> tuple[dict[str, Any] | None, str]:
     return None, "parse_failed"
 
 
+def recover_case_objects(text: str, max_tests: int) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in balanced_object_candidates_deep(text):
+        parsed, _parse_status = parse_object_candidate(candidate)
+        if parsed is None or looks_like_suite(parsed):
+            continue
+        case = normalize_case(parsed)
+        if case is None:
+            continue
+        key = case_key(case)
+        if key in seen:
+            continue
+        seen.add(key)
+        cases.append(case)
+        if len(cases) >= max_tests:
+            break
+    return cases
+
+
+def recover_fn_name(text: str) -> str:
+    match = re.search(r"""["']fn_name["']\s*:\s*["']([^"']+)["']""", text)
+    return match.group(1).strip() if match else ""
+
+
 def parse_tests(
     raw_text: str,
     expected_fn_name: str,
@@ -113,6 +168,17 @@ def parse_tests(
     parsed, parse_status = extract_json_object(raw_text)
     notes = [f"parse:{parse_status}"]
     if parsed is None:
+        recovered_cases = recover_case_objects(raw_text, max_tests)
+        recovered_fn = recover_fn_name(raw_text)
+        if recovered_fn and recovered_fn != expected_fn_name:
+            notes.append(f"fn_name_mismatch:{recovered_fn}")
+            return [], "fn_name_mismatch", notes
+        if len(recovered_cases) >= min_tests:
+            notes.append("recovered_case_objects")
+            return recovered_cases, "ok", notes
+        if recovered_cases:
+            notes.append("recovered_case_objects")
+            return recovered_cases, "too_few_tests", notes
         return [], "parse_failed", notes
     fn_name = str(parsed.get("fn_name") or parsed.get("function") or "").strip()
     if fn_name and fn_name != expected_fn_name:
