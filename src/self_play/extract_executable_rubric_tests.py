@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from src.self_play.executable_rubric_utils import (
-    all_passed,
     case_key,
     execute_function_tests,
     normalize_case,
@@ -28,30 +27,80 @@ from src.self_play.executable_rubric_utils import (
 FENCED_RE = re.compile(r"```(?:json|python)?\s*(.*?)```", flags=re.DOTALL | re.IGNORECASE)
 
 
+def balanced_object_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    start: int | None = None
+    depth = 0
+    in_string = False
+    escape = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                candidates.append(text[start : index + 1])
+                start = None
+    return candidates
+
+
+def parse_object_candidate(candidate: str) -> tuple[dict[str, Any] | None, str]:
+    try:
+        parsed = json.loads(candidate)
+        return (parsed, "json") if isinstance(parsed, dict) else (None, "not_object")
+    except json.JSONDecodeError:
+        pass
+    try:
+        parsed = ast.literal_eval(candidate)
+        return (parsed, "python_literal") if isinstance(parsed, dict) else (None, "not_object")
+    except Exception:
+        pass
+    return None, "parse_failed"
+
+
+def looks_like_suite(parsed: dict[str, Any]) -> bool:
+    return any(key in parsed for key in ("tests", "cases", "test_cases"))
+
+
 def extract_json_object(text: str) -> tuple[dict[str, Any] | None, str]:
     text = text.strip()
     fenced = FENCED_RE.search(text)
-    candidates = []
+    candidates: list[tuple[str, str]] = []
     if fenced:
-        candidates.append(fenced.group(1).strip())
+        candidates.append((fenced.group(1).strip(), "fenced"))
+    for candidate in reversed(balanced_object_candidates(text)):
+        candidates.append((candidate.strip(), "balanced"))
     start = text.find("{")
     end = text.rfind("}")
     if start >= 0 and end > start:
-        candidates.append(text[start : end + 1])
-    candidates.append(text)
-    for candidate in candidates:
+        candidates.append((text[start : end + 1], "outer_span"))
+    candidates.append((text, "whole_text"))
+    fallback: tuple[dict[str, Any], str] | None = None
+    for candidate, source in candidates:
         if not candidate.strip():
             continue
-        try:
-            parsed = json.loads(candidate)
-            return (parsed, "json") if isinstance(parsed, dict) else (None, "not_object")
-        except json.JSONDecodeError:
-            pass
-        try:
-            parsed = ast.literal_eval(candidate)
-            return (parsed, "python_literal") if isinstance(parsed, dict) else (None, "not_object")
-        except Exception:
-            pass
+        parsed, parse_status = parse_object_candidate(candidate)
+        if parsed is None:
+            continue
+        status = f"{parse_status}:{source}"
+        if looks_like_suite(parsed):
+            return parsed, status
+        if fallback is None:
+            fallback = (parsed, status)
+    if fallback is not None:
+        return fallback
     return None, "parse_failed"
 
 
@@ -97,6 +146,17 @@ def parse_tests(
     return cases, "ok", notes
 
 
+def passed_flags(result: dict[str, Any], total: int) -> list[bool]:
+    if result.get("setup_error"):
+        return [False] * total
+    flags = [False] * total
+    for item in result.get("results") or []:
+        index = item.get("test_index")
+        if isinstance(index, int) and 0 <= index < total:
+            flags[index] = bool(item.get("passed"))
+    return flags
+
+
 def evaluate_generation(
     generation: dict[str, Any],
     source: dict[str, Any],
@@ -116,6 +176,7 @@ def evaluate_generation(
         "fn_name": fn_name,
         "tests": cases,
         "test_count": len(cases),
+        "raw_test_count": len(cases),
         "extraction_status": extraction_status,
         "extraction_notes": notes,
         "quality_gate_passed": False,
@@ -127,21 +188,51 @@ def evaluate_generation(
         return row
 
     canonical = execute_function_tests(str(source.get("canonical_solution") or ""), fn_name, cases, timeout=timeout)
-    failed = execute_function_tests(str(source.get("failed_code") or ""), fn_name, cases, timeout=timeout)
     total = len(cases)
-    canonical_passed = all_passed(canonical, total)
-    failed_pass_count = passed_count(failed, total)
-    source_failure_caught = bool(failed.get("setup_error")) or failed_pass_count < total
+    canonical_flags = passed_flags(canonical, total)
+    usable_cases = [case for case, ok in zip(cases, canonical_flags) if ok]
+    dropped_indices = [index for index, ok in enumerate(canonical_flags) if not ok]
+    usable_total = len(usable_cases)
     row.update(
         {
-            "canonical_result": canonical,
+            "raw_tests": cases,
+            "raw_canonical_result": canonical,
+            "raw_canonical_pass_count": passed_count(canonical, total),
+            "canonical_valid_test_count": usable_total,
+            "dropped_test_indices": dropped_indices,
+            "tests": usable_cases,
+            "test_count": usable_total,
+            "canonical_passed_all_tests": total > 0 and usable_total == total,
+        }
+    )
+    if usable_total < min_tests:
+        row.update(
+            {
+                "quality_status": "too_few_canonical_valid_tests",
+                "canonical_result": canonical,
+                "canonical_pass_count": usable_total,
+            }
+        )
+        return row
+
+    canonical_filtered = execute_function_tests(
+        str(source.get("canonical_solution") or ""),
+        fn_name,
+        usable_cases,
+        timeout=timeout,
+    )
+    failed = execute_function_tests(str(source.get("failed_code") or ""), fn_name, usable_cases, timeout=timeout)
+    failed_pass_count = passed_count(failed, usable_total)
+    source_failure_caught = bool(failed.get("setup_error")) or failed_pass_count < usable_total
+    row.update(
+        {
+            "canonical_result": canonical_filtered,
             "source_failed_result": failed,
-            "canonical_pass_count": passed_count(canonical, total),
+            "canonical_pass_count": passed_count(canonical_filtered, usable_total),
             "source_failed_pass_count": failed_pass_count,
-            "canonical_passed_all_tests": canonical_passed,
             "source_failure_caught": source_failure_caught,
-            "quality_gate_passed": canonical_passed and source_failure_caught,
-            "quality_status": "ok" if canonical_passed and source_failure_caught else "failed_quality_gate",
+            "quality_gate_passed": source_failure_caught,
+            "quality_status": "ok" if source_failure_caught else "failed_to_catch_source_failure",
         }
     )
     return row
@@ -189,12 +280,18 @@ def main() -> None:
         "quality_gate_passed": counts.get("quality_gate_passed", 0),
         "quality_gate_pass_rate": counts.get("quality_gate_passed", 0) / total if total else 0.0,
         "canonical_pass_all_rate": sum(1 for row in output_rows if row.get("canonical_passed_all_tests")) / total if total else 0.0,
+        "canonical_valid_test_rate": (
+            sum(int(row.get("canonical_valid_test_count") or 0) for row in output_rows)
+            / sum(int(row.get("raw_test_count") or 0) for row in output_rows)
+            if sum(int(row.get("raw_test_count") or 0) for row in output_rows)
+            else 0.0
+        ),
         "source_failure_recall": sum(1 for row in output_rows if row.get("source_failure_caught")) / total if total else 0.0,
         "min_tests": args.min_tests,
         "max_tests": args.max_tests,
         "counts": dict(counts),
         "policy": {
-            "quality_gate": "a suite is usable only when canonical_solution passes all self-written tests and the known failed code fails at least one test",
+            "quality_gate": "self-written tests are filtered individually by canonical_solution; a suite is usable when at least min_tests canonical-valid tests remain and the known failed code fails at least one retained test",
             "hidden_suite": "not used by this script; it validates self-written tests against canonical and known failed code only",
         },
     }

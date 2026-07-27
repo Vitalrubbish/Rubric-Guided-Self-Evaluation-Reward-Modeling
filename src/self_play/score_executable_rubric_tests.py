@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -118,12 +119,36 @@ def selection_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
     selected = []
     first = []
     oracle_pass = 0
+    selected_only = 0
+    first_only = 0
+    both_pass = 0
+    neither_pass = 0
     for pid, group in groups.items():
         ordered = sorted(group, key=lambda row: (-float(row["test_score"]), str(row.get("response_id") or row.get("id") or "")))
-        selected.append(ordered[0])
-        first.append(sorted(group, key=lambda row: str(row.get("response_id") or row.get("id") or ""))[0])
+        selected_row = ordered[0]
+        first_row = sorted(group, key=lambda row: str(row.get("response_id") or row.get("id") or ""))[0]
+        selected.append(selected_row)
+        first.append(first_row)
+        selected_passed = bool(selected_row["gold_passed"])
+        first_passed = bool(first_row["gold_passed"])
+        if selected_passed and first_passed:
+            both_pass += 1
+        elif selected_passed and not first_passed:
+            selected_only += 1
+        elif first_passed and not selected_passed:
+            first_only += 1
+        else:
+            neither_pass += 1
         if any(row["gold_passed"] for row in group):
             oracle_pass += 1
+    discordant = selected_only + first_only
+    smaller_side = min(selected_only, first_only)
+    sign_test_p = None
+    if discordant:
+        sign_test_p = min(
+            1.0,
+            2.0 * sum(math.comb(discordant, i) for i in range(smaller_side + 1)) / (2**discordant),
+        )
     return {
         "problem_count": len(groups),
         "candidate_rows": len(rows),
@@ -133,6 +158,13 @@ def selection_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "first_candidate_pass_rate": sum(1 for row in first if row["gold_passed"]) / len(first),
         "oracle_best_of_k_passed": oracle_pass,
         "oracle_best_of_k_pass_rate": oracle_pass / len(groups),
+        "paired_selected_vs_first": {
+            "both_pass": both_pass,
+            "selected_only_pass": selected_only,
+            "first_only_pass": first_only,
+            "neither_pass": neither_pass,
+            "exact_sign_test_p_two_sided": sign_test_p,
+        },
     }
 
 
@@ -151,7 +183,7 @@ def select_rows_by_tests(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--suites", type=Path, required=True)
+    parser.add_argument("--suites", type=Path, nargs="+", required=True)
     parser.add_argument("--candidates", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("data/self_play/executable_rubric_candidate_scores.jsonl"))
     parser.add_argument("--summary-output", type=Path, default=Path("data/self_play/executable_rubric_candidate_scores_summary.json"))
@@ -159,7 +191,10 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
 
-    suites = select_suites(read_jsonl(args.suites))
+    suite_rows: list[dict[str, Any]] = []
+    for suite_path in args.suites:
+        suite_rows.extend(read_jsonl(suite_path))
+    suites = select_suites(suite_rows)
     candidates = read_jsonl(args.candidates)
     output_rows: list[dict[str, Any]] = []
     counts: Counter[str] = Counter()
@@ -180,8 +215,8 @@ def main() -> None:
     selected_rows = select_rows_by_tests(output_rows)
     write_jsonl(args.selected_output, selected_rows)
     summary = {
-        "suites": str(args.suites),
-        "suites_sha256": sha256_file(args.suites),
+        "suites": [str(path) for path in args.suites],
+        "suites_sha256": {str(path): sha256_file(path) for path in args.suites},
         "candidates": str(args.candidates),
         "candidates_sha256": sha256_file(args.candidates),
         "output": str(args.output),

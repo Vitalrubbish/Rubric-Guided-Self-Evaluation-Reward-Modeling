@@ -44,7 +44,11 @@ def build_prompt(public_prompt: str, failed_code: str, fn_name: str, target_test
         "You are writing an executable rubric for a Python coding task.\n"
         "Use only the public task text, public examples, required callable name, and visible failed code. "
         "Do not rely on hidden tests or private verifier messages.\n"
-        f"Write {target_tests} focused function-call tests that a correct solution should pass and that are likely to expose the visible bug.\n"
+        f"Write exactly {target_tests} focused function-call tests that a correct solution should pass and that are likely to expose the visible bug.\n"
+        "Only include a test when you can manually derive the expected value from the task statement. "
+        "Prefer small, hand-checkable inputs over broad random coverage.\n"
+        "The executor will call the function as fn(*args). Therefore args must be the JSON array of positional arguments. "
+        "If the function takes one list-valued argument, wrap that list once, for example {\"args\": [[1, 2, 3]], \"expected\": 3}.\n"
         "Return JSON only. No Markdown, no prose.\n"
         "Schema:\n"
         "{\n"
@@ -53,6 +57,10 @@ def build_prompt(public_prompt: str, failed_code: str, fn_name: str, target_test
         '    {"args": [arg1, arg2], "expected": expected_value}\n'
         "  ]\n"
         "}\n\n"
+        "Argument examples:\n"
+        '- For def add(a, b), use {"args": [2, 3], "expected": 5}.\n'
+        '- For def count_items(items), use {"args": [["a", "b"]], "expected": 2}.\n'
+        '- For def normalize(s), use {"args": ["  hi  "], "expected": "hi"}.\n\n'
         f"Required callable name: {fn_name}\n\n"
         f"Public task prompt:\n{public_prompt.strip()}\n\n"
         f"Visible failed code:\n{failed_code.strip()}\n\n"

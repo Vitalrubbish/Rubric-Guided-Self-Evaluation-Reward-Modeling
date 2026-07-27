@@ -41,6 +41,24 @@ class ExecutableRubricExtractionTests(unittest.TestCase):
         self.assertEqual(cases, [{"args": [1], "expected": 2}, {"args": [5], "expected": 6}])
         self.assertIn("dropped_duplicate_case", notes)
 
+    def test_parse_tests_recovers_last_suite_after_leading_case_objects(self) -> None:
+        raw = """{"args": [1], "expected": 2}
+JSON: {"args": [5], "expected": 6}
+{
+  "fn_name": "solve",
+  "tests": [
+    {"args": [1], "expected": 2},
+    {"args": [5], "expected": 6}
+  ]
+}
+"""
+
+        cases, status, notes = parse_tests(raw, "solve", min_tests=2, max_tests=5)
+
+        self.assertEqual(status, "ok")
+        self.assertEqual(cases, [{"args": [1], "expected": 2}, {"args": [5], "expected": 6}])
+        self.assertIn("parse:json:balanced", notes)
+
     def test_evaluate_generation_requires_canonical_pass_and_failed_code_fail(self) -> None:
         source = {
             "id": "apps/train/1__exec_rubric_testgen",
@@ -62,6 +80,36 @@ class ExecutableRubricExtractionTests(unittest.TestCase):
         self.assertTrue(evaluated["canonical_passed_all_tests"])
         self.assertTrue(evaluated["source_failure_caught"])
         self.assertEqual(evaluated["source_failed_pass_count"], 0)
+
+    def test_evaluate_generation_filters_invalid_individual_tests(self) -> None:
+        source = {
+            "id": "apps/train/1__exec_rubric_testgen",
+            "source_row_id": "apps/train/1",
+            "problem_id": "apps/train/1",
+            "metadata": {"fn_name": "solve"},
+            "canonical_solution": "def solve(x):\n    return x + 1\n",
+            "failed_code": "def solve(x):\n    return x - 1\n",
+        }
+        generation = {
+            "id": "apps/train/1__exec_rubric_testgen",
+            "response_id": "suite-1",
+            "generated_code": (
+                '{"fn_name": "solve", "tests": ['
+                '{"args": [1], "expected": 2}, '
+                '{"args": [5], "expected": 123}, '
+                '{"args": [10], "expected": 11}'
+                "]}"
+            ),
+        }
+
+        evaluated = evaluate_generation(generation, source, min_tests=2, max_tests=5, timeout=5.0)
+
+        self.assertTrue(evaluated["quality_gate_passed"])
+        self.assertFalse(evaluated["canonical_passed_all_tests"])
+        self.assertEqual(evaluated["raw_test_count"], 3)
+        self.assertEqual(evaluated["test_count"], 2)
+        self.assertEqual(evaluated["dropped_test_indices"], [1])
+        self.assertEqual(evaluated["tests"], [{"args": [1], "expected": 2}, {"args": [10], "expected": 11}])
 
 
 class ExecutableRubricScoringTests(unittest.TestCase):
