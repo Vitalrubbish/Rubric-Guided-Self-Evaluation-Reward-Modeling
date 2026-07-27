@@ -1,6 +1,6 @@
 # Project Status And Next Steps
 
-Date: 2026-07-25
+Date: 2026-07-27
 Scope: overall progress against `docs/task.md` (Homework 3 + 4), measured
 conclusions, current blockers, and the prioritized path forward.
 
@@ -79,6 +79,35 @@ negative results (`docs/method1/`).
 
 The findings->repair causal link, absent at 7B, is established at 32B.
 
+### Strategy v2: executable rubrics (active main line)
+
+Natural-language rubrics are no longer the main implementation target.
+The current rubric artifact is a model-written executable test suite,
+validated by an executor and used as an external reward/test library.
+
+Gate200 K=5 candidate probe with 32B-Coder-AWQ:
+
+- candidate pool: 200 problems x 5 repairs = 1000 candidates;
+- verifier labels: 452/1000 pass; first sample 91/200; oracle best-of-5
+  116/200;
+- best executable-rubric scorer so far: selected 104/200 (52.0%) vs
+  first 91/200 (45.5%), paired p=0.000244;
+- covered-problem effect: with quality-gated suites, selected 32/79 vs
+  first 19/79, oracle 34/79;
+- current weakness: usable suite coverage only 79/200, candidate pass
+  precision only ~0.627, below the ~0.80 reward-training threshold;
+- no-suite targeted expansion: 548 generations, 0 quality-gated suites;
+- with-suite hardening expansion: 80 generations, 2 quality-gated suites,
+  candidate FP -2, selected pass unchanged.
+
+Training data candidates extracted:
+
+- strict repair SFT: 27 rows, selected by tests + verifier pass + has
+  quality-gated suite + test_score=1.0;
+- broad repair SFT: 99 verifier-passing selected rows, but 72 are
+  no-suite and therefore not rubric-attributable;
+- testgen SFT: 95 quality-gated test-generation rows over 79 problems.
+
 ## 3. Conclusions So Far
 
 | wall | verdict |
@@ -87,6 +116,8 @@ The findings->repair causal link, absent at 7B, is established at 32B.
 | judge capability | scale wall (AUC 0.81 -> 0.87, Kappa 0.51 -> 0.64) |
 | rubric content validity | **structural** (auto ≈ random at 7B and 32B) |
 | self-play compounding | falsified at 7B; **undecided at 32B** |
+| executable-rubric ranking | positive system signal on covered problems, but not reward-ready |
+| executable test generation | current bottleneck: weak no-suite bootstrap and low false-positive rejection |
 
 Interim thesis: small-scale self-evolution is information-bounded (the
 loop has no new-information channel beyond 1-bit verifier selection);
@@ -95,20 +126,31 @@ decisive test of how high that ceiling sits.
 
 ## 4. Current Blockers
 
-- **GPU memory**: cluster 8xA800 all occupied by other tenants; max free
-  ~43GB. bf16 32B training/inference needs ~70GB free.
+- **Testgen quality is the main blocker**: the model can produce
+  parseable tests, but many canonical-valid tests do not falsify the
+  suspect code. no-suite bootstrap is currently 0/548.
+- **Executable-rubric coverage is too low**: only 79/200 gate problems
+  have usable quality-gated suites; no-suite problems cannot be
+  meaningfully re-ranked.
+- **Reward precision is too low for mainline training**: current
+  candidate pass precision is ~0.627, below the ~0.80 threshold.
+- **High-quality repair data is small**: strict repair SFT has only 27
+  rows. It is suitable for a canary only, not a mainline claim.
+- **Evaluation split discipline**: any gate200 row used for training data
+  invalidates gate200 as an unbiased post-training evaluation; a fresh
+  held-out gate is needed for training canaries.
 - AWQ quantization caveat: all 32B numbers are AWQ 4-bit; headline values
-  need one bf16 confirmation run when a GPU frees.
+  still need bf16 confirmation when resources allow.
 - Human-rubric upper-bound row of the Homework 3 metrics table still
   empty (report completeness item).
 
 ## 5. Next Steps (prioritized)
 
-**Strategy v2 (main line)**: `docs/strategy-v2-executable-rubric.md` —
-replace natural-language rubrics with model-written EXECUTABLE tests as
-the reward signal, 32B Coder as the new baseline, test library as the
-evolving artifact. First step: test-quality probe (Section 6 of that
-doc).
+**Strategy v2 (active main line)**:
+`docs/strategy-v2-executable-rubric.md` — replace natural-language
+rubrics with model-written executable tests. The current loop is
+testgen-first: improve the executable-rubric/test library before using
+repair-model weight updates as a mainline result.
 
 1. ~~32B self-play loop r0 -> r1 -> r2~~ **DONE (2026-07-26, QLoRA)**:
    plateau confirmed — 48.5 -> 46.0 -> 48.5 -> 48.5, telemetry flat,
@@ -124,18 +166,34 @@ doc).
    the gain is information-theoretic, not capability-theoretic; evolution
    is viable at the SYSTEM level (model+executor), not at the weight
    level. See `docs/method2/11-execution-feedback-probe.md`.
-4. **Self-generated curriculum**: model-generated problem variants to
+4. **Train a testgen SFT canary** on the 95 quality-gated testgen rows,
+   then evaluate on fresh held-out problems, not on the same gate200 rows.
+   Success metric: higher quality_gate_pass_rate, source_failure_recall,
+   usable suite coverage, and downstream selected pass rate.
+5. **Add feedback-rich testgen prompting**: include existing-test
+   execution results, suspect-code observable behavior, coarse previous
+   quality-gate feedback, and an error-hypothesis/spec-decomposition
+   stage before final JSON tests.
+6. **Expand executable-rubric data off-gate**: run K-candidate generation,
+   verification, candidate-aware testgen, extraction, scoring, and strict
+   training-data extraction on a larger APPS train pool while reserving a
+   clean held-out gate.
+7. **Strict repair SFT canary**: use only the 27 strict rows, or a larger
+   off-gate strict set after expansion. Treat broad repair SFT as an
+   ablation because it mixes no-suite verifier-pass rows.
+8. **Self-generated curriculum**: model-generated problem variants to
    escape the saturated 335-prompt pool.
-5. **v0.7 external-signal arm**: gold diagnosis->repair demonstrations vs
+9. **v0.7 external-signal arm**: gold diagnosis->repair demonstrations vs
    the pure self-play trajectory — the controlled answer to "which errors
    need external signals".
-6. **72B-AWQ judge ablation probe** (~1h, when ~41GB+ contiguous frees):
+10. **72B-AWQ judge ablation probe** (~1h, when ~41GB+ contiguous frees):
    last data point for the rubric question (auto vs random separation).
-7. **bf16 confirmation** of 32B headline numbers when a GPU frees.
-8. **Human-rubric arm** to fill the last Homework 3 table row.
-9. **Report writing**: selection-biased gate correction, plateaus at two
+11. **bf16 confirmation** of 32B headline numbers when a GPU frees.
+12. **Human-rubric arm** to fill the last Homework 3 table row.
+13. **Report writing**: selection-biased gate correction, plateaus at two
    scales, rubric ablation negative result, findings->repair disconnect
-   at 7B and its recovery at 32B, saturated self-play at 32B.
+   at 7B and its recovery at 32B, saturated self-play at 32B, and the
+   executable-rubric system-level loop.
 
 ## 6. Key Artifact Index
 
@@ -149,5 +207,16 @@ doc).
 - telemetry scorings: `data/annotation/apps_simple_gold_scoring_{v0_4,v0_6,coder32b}_merged.jsonl`
 - 32B results: `data/evaluator/..._coder32b_awq.json`,
   `data/self_play/..._coder32b_awq_*.jsonl`
+- executable-rubric strategy: `docs/strategy-v2-executable-rubric.md`
+- executable-rubric scripts:
+  `src/self_play/build_candidate_aware_executable_rubric_probe_input.py`,
+  `src/self_play/extract_executable_rubric_tests.py`,
+  `src/self_play/score_executable_rubric_tests.py`,
+  `src/self_play/build_executable_rubric_sft_data.py`,
+  `src/self_play/build_executable_rubric_testgen_sft_data.py`
+- executable-rubric SFT candidates:
+  `data/sft/executable_rubric_gate200_k5_strict_rubric_selected_sft.jsonl`,
+  `data/sft/executable_rubric_gate200_k5_verifier_pass_selected_sft.jsonl`,
+  `data/sft/executable_rubric_gate200_quality_gated_testgen_sft.jsonl`
 - models: `models/models--Qwen--Qwen2.5-Coder-32B-Instruct` (bf16),
   `...-AWQ`, `models--Qwen--Qwen2.5-72B-Instruct-AWQ`
