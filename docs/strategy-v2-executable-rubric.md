@@ -49,29 +49,70 @@ What changes is the **implementation form of "rubric"**, not the goal.
   loop needs.
 - 72B deferred: it would raise the plateau, not answer a new question.
 
-## 5. The New Main Loop
+## 5. Current Main Loop
+
+The loop is now **testgen-first**. Repair-model weight updates are
+downstream of executable-rubric quality, not the first thing to train.
 
 ```
-1. FAILURE COLLECTION   model solves/repairs; verifier labels failures
-2. EXECUTABLE RUBRIC    model writes a test suite per failed problem
-3. TEST QUALITY GATE    tests are validated against canonical/verifier
-                        labels (precision/recall); bad tests are dropped
-                        — a rubric that scores wrong is worse than none
-4. REWARD               K repair candidates per problem are ranked by
-                        the model's own tests (per-dimension, executable,
-                        N-bit), not by prose judgment or 1-bit verdict
-5. TRAINING             top-ranked repairs join SFT data (QLoRA,
-                        unchanged conservative protocol)
-6. TELEMETRY (two layers)
-   - system: test-library evolution — coverage, precision, per-taxonomy
-     growth curve (the demonstrable "rubric is evolving" evidence)
-   - weights: bare gate200 + paired bootstrap; gold-100 attribution and
-     conditional-repair telemetry (unchanged discipline)
+0. SPLIT DISCIPLINE
+   Keep the final gate held out. If gate200 rows are used for canary
+   training data, gate200 can no longer be reported as an unbiased
+   post-training result.
+
+1. FAILURE COLLECTION
+   Generate K repair candidates per train problem with 32B Coder.
+   Run the verifier to label pass/fail. Hidden labels are used only as
+   offline filters and metrics.
+
+2. RUBRIC / TESTGEN EVOLUTION
+   For failed or still-accepted suspect candidates, ask the model to
+   write candidate-aware executable tests from public task text,
+   required interface, existing tests, and visible suspect code.
+
+3. TEST QUALITY GATE
+   Keep only tests that:
+   - the canonical solution passes; and
+   - the visible failed/suspect code fails at least one retained test.
+   Bad expected values, duplicate tests, malformed JSON, and suites that
+   do not catch the failure are dropped.
+
+4. TEST LIBRARY MEMORY
+   Aggregate quality-gated suites by problem, de-duplicate tests, and
+   track coverage, candidate precision, false-positive rejection, and
+   no-suite rate. This external test library is the executable rubric.
+
+5. CANDIDATE SCORING
+   Score each K-candidate group with the problem's test library. Select
+   the candidate with the highest executable-rubric test_score. Problems
+   with no suite are treated as abstentions/no intervention for
+   evaluation and are excluded from strict rubric-supported training.
+
+6. HIGH-QUALITY DATA EXTRACTION
+   - strict repair SFT: selected by tests + verifier pass + has suite +
+     test_score=1.0;
+   - broad repair SFT: selected + verifier pass, including no-suite rows
+     for ablation only;
+   - testgen SFT: quality-gated suites reserialized as clean JSON tests.
+
+7. TRAINING CANARY
+   Prefer training the test generator first, because current bottlenecks
+   are suite coverage and precision. Repair SFT is allowed only as a
+   small strict-data canary until the executable-rubric signal clears the
+   precision/coverage gate.
+
+8. HELD-OUT EVALUATION
+   Evaluate on a gate not used for data extraction. Main metrics:
+   selected pass rate vs first sample, oracle best-of-K, candidate pass
+   precision, suite coverage, paired sign/bootstrap significance, and
+   reward-hacking audits.
 ```
 
-Anti-hacking: tests validated against canonical solutions before use;
-repairs must pass the hidden suite to enter training data; public-literal
-scan on all training rows (both gates already implemented).
+Anti-hacking: tests are validated against canonical solutions before
+use; repairs must pass the hidden verifier to enter repair SFT data;
+public-literal scan applies to all training rows; audit-only fields such
+as `canonical_solution` and `failed_code` must not be serialized into
+training prompts.
 
 ## 6. Decisive First Experiment: Test-Quality Probe
 
