@@ -156,3 +156,35 @@ not more volume with the same prompt; it is a stronger test-generation
 variant that can bootstrap no-suite problems, likely by adding
 spec-decomposition/error-hypothesis scaffolding before asking for JSON
 tests, then re-running the same gate200 K=5 scorer.
+
+## 9. High-Quality Training Data Candidates (2026-07-27)
+
+The usable high-quality subset is small but extractable. It should be
+treated as canary or auxiliary data, not evidence that the reward is
+ready for mainline training.
+
+Artifacts:
+
+- strict repair SFT:
+  `data/sft/executable_rubric_gate200_k5_strict_rubric_selected_sft.jsonl`
+  has 27 rows. Filter: selected by executable tests, verifier-passing,
+  predicted pass by tests, `test_score=1.0`, and covered by a
+  quality-gated suite. All rows are function-call tasks and syntax-parse.
+- broad repair SFT:
+  `data/sft/executable_rubric_gate200_k5_verifier_pass_selected_sft.jsonl`
+  has 99 rows. Filter: selected and verifier-passing with
+  `test_score=1.0`; includes 72 no-suite rows, so this is verifier-clean
+  but not purely rubric-supported.
+- testgen SFT:
+  `data/sft/executable_rubric_gate200_quality_gated_testgen_sft.jsonl`
+  has 95 rows over 79 problems. Filter: only `quality_gate_passed`
+  suites; completion is reserialized from retained canonical-valid tests
+  only, not raw model text.
+
+Recommended use:
+
+- use strict repair SFT as the only repair-training canary if we train
+  before improving coverage;
+- use testgen SFT to train or prompt-tune the next test generator;
+- keep broad repair SFT as an ablation, because it mixes rubric-guided
+  rows with no-suite verifier-pass rows.

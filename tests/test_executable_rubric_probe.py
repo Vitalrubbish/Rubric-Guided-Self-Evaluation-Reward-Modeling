@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 
 from src.self_play.build_candidate_aware_executable_rubric_probe_input import suite_filter_allows
+from src.self_play.build_executable_rubric_sft_data import build_training_rows as build_repair_sft_rows
+from src.self_play.build_executable_rubric_testgen_sft_data import build_training_rows as build_testgen_sft_rows
 from src.self_play.build_executable_rubric_probe_input import extract_public_prompt
 from src.self_play.executable_rubric_utils import all_passed, execute_function_tests
 from src.self_play.extract_executable_rubric_tests import evaluate_generation, parse_tests
@@ -38,6 +40,144 @@ class ExecutableRubricInputTests(unittest.TestCase):
         self.assertFalse(suite_filter_allows(with_suite, "no_suite"))
         self.assertFalse(suite_filter_allows(no_suite, "with_suite"))
         self.assertTrue(suite_filter_allows(with_suite, "with_suite"))
+
+
+class ExecutableRubricSftDataTests(unittest.TestCase):
+    def test_build_training_rows_separates_strict_and_verifier_pass_tiers(self) -> None:
+        sources = [
+            {
+                "id": "apps/train/1",
+                "split": "train",
+                "prompt": "Solve task 1.\nPython code:\n",
+                "completion": "",
+                "source": "base",
+                "io_mode": "function_call",
+            },
+            {
+                "id": "apps/train/2",
+                "split": "train",
+                "prompt": "Solve task 2.\nPython code:\n",
+                "completion": "",
+                "source": "base",
+                "io_mode": "function_call",
+            },
+        ]
+        selected = [
+            {
+                "id": "candidate-1",
+                "response_id": "response-1",
+                "problem_id": "apps/train/1",
+                "gold_passed": True,
+                "predicted_pass_by_tests": True,
+                "suite_response_id": "suite-1",
+                "test_count": 2,
+                "test_pass_count": 2,
+                "test_score": 1.0,
+                "extracted_code": "def solve():\n    return 1\n",
+            },
+            {
+                "id": "candidate-2",
+                "response_id": "response-2",
+                "problem_id": "apps/train/2",
+                "gold_passed": True,
+                "predicted_pass_by_tests": True,
+                "suite_response_id": None,
+                "test_count": 0,
+                "test_score": 1.0,
+                "extracted_code": "def solve():\n    return 2\n",
+            },
+            {
+                "id": "candidate-3",
+                "response_id": "response-3",
+                "problem_id": "apps/train/2",
+                "gold_passed": False,
+                "predicted_pass_by_tests": True,
+                "suite_response_id": "suite-2",
+                "test_count": 2,
+                "test_score": 1.0,
+                "extracted_code": "def solve():\n    return 3\n",
+            },
+        ]
+
+        strict_rows, strict_accepted, strict_counts = build_repair_sft_rows(
+            selected_rows=selected,
+            source_rows=sources,
+            quality_tier="strict_rubric",
+            min_test_score=1.0,
+            require_predicted_pass=True,
+            max_rows=None,
+            source_tag="unit_exec_rubric",
+            selected_path=__file__,
+        )
+        broad_rows, _broad_accepted, broad_counts = build_repair_sft_rows(
+            selected_rows=selected,
+            source_rows=sources,
+            quality_tier="verifier_pass",
+            min_test_score=1.0,
+            require_predicted_pass=True,
+            max_rows=None,
+            source_tag="unit_exec_rubric",
+            selected_path=__file__,
+        )
+
+        self.assertEqual(len(strict_rows), 1)
+        self.assertEqual(strict_rows[0]["metadata"]["suite_response_id"], "suite-1")
+        self.assertEqual(strict_accepted[0]["sft_id"], strict_rows[0]["id"])
+        self.assertEqual(strict_counts["skipped:missing_quality_suite"], 1)
+        self.assertEqual(len(broad_rows), 2)
+        self.assertEqual(broad_counts["accepted:no_suite"], 1)
+
+    def test_build_testgen_training_rows_keeps_only_quality_gated_suites(self) -> None:
+        source_rows = [
+            {
+                "id": "suite-input-1",
+                "split": "train",
+                "prompt": "Write tests.",
+                "completion": "",
+                "metadata": {"candidate_response_id": "candidate-1"},
+            }
+        ]
+        suite_rows = [
+            {
+                "id": "suite-input-1",
+                "response_id": "suite-1",
+                "problem_id": "apps/train/1",
+                "source_row_id": "apps/train/1",
+                "fn_name": "solve",
+                "tests": [{"args": [1], "expected": 2}, {"args": [5], "expected": 6}],
+                "raw_test_count": 5,
+                "canonical_valid_test_count": 2,
+                "source_failed_pass_count": 1,
+                "source_failure_caught": True,
+                "quality_gate_passed": True,
+                "quality_status": "ok",
+            },
+            {
+                "id": "suite-input-2",
+                "response_id": "suite-2",
+                "problem_id": "apps/train/2",
+                "fn_name": "solve",
+                "tests": [{"args": [1], "expected": 2}],
+                "quality_gate_passed": False,
+                "quality_status": "failed_to_catch_source_failure",
+            },
+        ]
+
+        rows, counts = build_testgen_sft_rows(
+            suite_rows=suite_rows,
+            source_rows=source_rows,
+            min_tests=2,
+            source_tag="unit_testgen",
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["prompt"], "Write tests.")
+        self.assertEqual(
+            rows[0]["completion"],
+            '{"fn_name": "solve", "tests": [{"args": [1], "expected": 2}, {"args": [5], "expected": 6}]}',
+        )
+        self.assertEqual(rows[0]["metadata"]["suite_response_id"], "suite-1")
+        self.assertEqual(counts["skipped:quality_status:failed_to_catch_source_failure"], 1)
 
 
 class ExecutableRubricUtilsTests(unittest.TestCase):
