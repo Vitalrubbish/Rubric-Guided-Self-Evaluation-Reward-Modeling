@@ -103,3 +103,43 @@ Outcomes:
   reward-hacking audits;
 - the falsified-route registry (NL rubric, self-play SFT, DPO, feedback
   distillation) as the report's negative-results chapter.
+
+## 8. Gate200 K=5 Probe Update (2026-07-27)
+
+Current best evidence is positive for ranking, but not yet strong enough
+to start training.
+
+Setup:
+
+- candidate pool: 32B-Coder-AWQ, gate200, K=5 stochastic repairs
+  (`temperature=0.7`, `top_p=0.95`), 1000 candidates total;
+- labels: verifier pass `452/1000`, first-sample pass `91/200`, oracle
+  best-of-5 pass `116/200`;
+- scorer: executable rubric union scoring with empty candidates counted
+  as fail and no-suite candidates treated as pass/no intervention.
+
+Results:
+
+| suites | usable problems | selected pass | first pass | oracle pass | paired p | candidate pass precision |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| old gate200 min2 candidate-aware suites | 44 | 98/200 (49.0%) | 91/200 (45.5%) | 116/200 (58.0%) | 0.015625 | 0.532 |
+| old+K5 expanded min2 suites | 79 | 104/200 (52.0%) | 91/200 (45.5%) | 116/200 (58.0%) | 0.000244 | 0.626 |
+| old+K5 expanded min3 suites | 60 | 102/200 (51.0%) | 91/200 (45.5%) | 116/200 (58.0%) | 0.000977 | 0.558 |
+
+Interpretation:
+
+- executable tests do rank K=5 candidates above the same-sample first
+  baseline, and the expanded min2 result is statistically clear;
+- the remaining gap is coverage: expanded min2 covers 79/200 problems;
+  on covered problems it selects 32/79 pass versus sample0 19/79 and
+  oracle 34/79, but the 121 no-suite problems stay at sample0 behavior
+  (72/121 selected, oracle 82/121);
+- candidate-level pass precision is still only 0.626, below the ~0.80
+  threshold for using this as a mainline reward/training signal.
+
+Decision: do not start training yet. The next evaluation step is another
+coverage-targeted candidate-aware testgen pass over the remaining
+no-suite predicted-pass candidates, using the validated faster vLLM
+configuration (`max_model_len=3072`, `prompt_batch_size=16`,
+`gpu_memory_utilization=0.35` on A800 80GB with the current shared GPU
+load).
