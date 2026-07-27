@@ -42,6 +42,17 @@ def compact_tests_for_prompt(tests: list[dict[str, Any]], max_tests: int) -> str
     return json.dumps(tests[:max_tests], ensure_ascii=False, sort_keys=True)
 
 
+def suite_filter_allows(row: dict[str, Any], suite_filter: str) -> bool:
+    has_suite = bool(row.get("suite_response_id"))
+    if suite_filter == "all":
+        return True
+    if suite_filter == "no_suite":
+        return not has_suite
+    if suite_filter == "with_suite":
+        return has_suite
+    raise ValueError(f"unsupported suite filter: {suite_filter}")
+
+
 def build_prompt(
     public_prompt: str,
     suspect_code: str,
@@ -93,6 +104,12 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--max-existing-tests-in-prompt", type=int, default=12)
     parser.add_argument("--predicted-pass-only", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--suite-filter",
+        choices=("all", "no_suite", "with_suite"),
+        default="all",
+        help="Which scored candidates to render based on whether they already had a quality-gated suite.",
+    )
     args = parser.parse_args()
 
     scores = read_jsonl(args.scores)
@@ -105,6 +122,9 @@ def main() -> None:
     for row in scores:
         if args.predicted_pass_only and not row.get("predicted_pass_by_tests"):
             counts["skipped:not_predicted_pass"] += 1
+            continue
+        if not suite_filter_allows(row, args.suite_filter):
+            counts[f"skipped:suite_filter:{args.suite_filter}"] += 1
             continue
         pid = problem_id(row)
         if not pid:
@@ -198,6 +218,7 @@ def main() -> None:
         "target_tests": args.target_tests,
         "limit": args.limit,
         "predicted_pass_only": args.predicted_pass_only,
+        "suite_filter": args.suite_filter,
         "counts": dict(counts),
         "policy": {
             "prompt_inputs": "public task, existing model-written executable tests, and one visible suspect candidate only",

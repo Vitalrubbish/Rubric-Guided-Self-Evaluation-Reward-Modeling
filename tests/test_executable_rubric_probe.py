@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from src.self_play.build_candidate_aware_executable_rubric_probe_input import suite_filter_allows
 from src.self_play.build_executable_rubric_probe_input import extract_public_prompt
 from src.self_play.executable_rubric_utils import all_passed, execute_function_tests
 from src.self_play.extract_executable_rubric_tests import evaluate_generation, parse_tests
@@ -26,6 +27,17 @@ class ExecutableRubricInputTests(unittest.TestCase):
         )
 
         self.assertEqual(extract_public_prompt(prompt), "Solve the task.")
+
+    def test_suite_filter_allows_no_suite_and_with_suite_modes(self) -> None:
+        no_suite = {"suite_response_id": None}
+        with_suite = {"suite_response_id": "suite-1"}
+
+        self.assertTrue(suite_filter_allows(no_suite, "all"))
+        self.assertTrue(suite_filter_allows(with_suite, "all"))
+        self.assertTrue(suite_filter_allows(no_suite, "no_suite"))
+        self.assertFalse(suite_filter_allows(with_suite, "no_suite"))
+        self.assertFalse(suite_filter_allows(no_suite, "with_suite"))
+        self.assertTrue(suite_filter_allows(with_suite, "with_suite"))
 
 
 class ExecutableRubricUtilsTests(unittest.TestCase):
