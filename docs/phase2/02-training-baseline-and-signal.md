@@ -1,83 +1,102 @@
-# Phase 2 Training Baseline and Signal
+# Phase 2 Training Baseline And Signal Status
 
-## Alignment With `task.md`
+Date: 2026-07-12
 
-This Phase 2 setup produces the handoff artifacts for **作业 4 方法 1：Error-Pattern -> Rubric -> RL 闭环**. Phase 2 itself ends after the baseline and training-signal artifacts are produced.
+## Current Status
 
-Mapping:
+The active dataset has changed to APPS simple. Therefore the old MBPP `hitl_v3` and `v5-lite failures` metrics are no longer current training-baseline evidence for this project state.
 
-1. Generate responses: Phase 1 generated MBPP code responses.
-2. Discover error patterns: Phase 1 clustered verifier-failed train responses and refined them into an operational taxonomy.
-3. Generate/update rubric: Phase 2 converts that taxonomy into an 8-dimension rubric.
-4. Handoff to Method 1: v5-lite failures creates verifier-gated rubric signals for reward/preference construction.
-5. Method 1 training and post-RL evaluation happen outside Phase 2.
+Current completed APPS artifacts:
 
-External verifier labels are allowed as the failure-discovery and evaluation signal in `task.md`, but the final self-evaluation claim must be measured without an external execution gate.
-
-## Current Decision
-
-- Use `hitl_v3` as the **pre-RL self-evaluation baseline**.
-- Use `v5-lite failures` as the **reliable training signal source**.
-- Do not use v5-lite failures as proof of pure self-evaluation accuracy, because it uses verifier execution results in post-processing.
-- Treat Phase 2 as complete once both artifacts are generated and audited.
-
-## Baseline: v3 Self-Evaluation
-
-v3 is the baseline for measuring whether later RL improves rubric-based self-evaluation without external execution gates. This is the number the post-RL evaluator must beat.
-
-Full test metrics:
-
-- AUC: `0.618196080942623`
-- Accuracy: `0.5866666666666667`
-- Kappa: `0.18481119175344474`
-- Overacceptance: `0.7018229166666666`
-- False rejection: `0.11065573770491803`
-- Confusion: `TN=229, FP=539, FN=81, TP=651`
-
-Run entrypoint:
-
-```bash
-scripts/phase2/run_phase2_hitl_v3_judge.sh
+```text
+data/responses/apps_train_simple_executable_qwen25_k1_t2048_full_labeled.jsonl
+data/responses/apps_train_simple_executable_qwen25_k1_t2048_full_labeled_nonlength.jsonl
+data/analysis/apps_simple_phase1/apps_train_simple_qwen25_k1_t2048_taxonomy_refined_for_rubric.yaml
+data/rubrics/apps_simple_phase2/apps_train_simple_llm_rubric_from_refined_taxonomy.json
 ```
 
-## Training Signal: v5-Lite Failures
+What exists now:
 
-v5-lite failures is not a pure LLM self-evaluation metric. It is a verifier-failure-gated rubric judge used to construct lower-noise training rewards and preference data.
+- verifier pass/fail labels for 2613 APPS simple responses;
+- safe non-length failure set with 1219 failures;
+- 9-category refined taxonomy;
+- 9-dimension audited rubric.
 
-Full test metrics:
+What does not yet exist for APPS simple:
 
-- AUC: `0.9506062158469946`
-- Accuracy: `0.9433333333333334`
-- Kappa: `0.8862918847186995`
-- Overacceptance: `0.0`
-- False rejection: `0.11612021857923498`
-- Confusion: `TN=768, FP=0, FN=85, TP=647`
+- no-gate LLM self-evaluation baseline;
+- verifier-gated rubric teacher signal;
+- trained evaluator/critic;
+- post-training no-gate self-evaluation comparison.
 
-Run entrypoint:
+## Available Training Signal
 
-```bash
-scripts/phase2/run_phase2_hitl_v5_lite_failures_judge.sh
+The strongest current signal is the external verifier label:
+
+| Metric | Value |
+| --- | ---: |
+| Full labeled responses | 2613 |
+| Passed | 1109 |
+| Failed | 1504 |
+| Pass rate | 42.44% |
+| Non-length labeled responses | 2283 |
+| Non-length failures used for taxonomy | 1219 |
+
+This can train or validate a pass/fail critic, but it is not a human rubric label and not a 1-5 dimension-level target.
+
+The refined taxonomy assignments provide failure-type supervision for the 1219 non-length failures:
+
+| Category | Failure assignments |
+| --- | ---: |
+| syntax_parseability_truncation | 362 |
+| numeric_formula_arithmetic_error | 210 |
+| edge_case_handling | 194 |
+| output_type_or_container_shape | 130 |
+| runtime_api_type_misuse | 103 |
+| interface_name_signature_mismatch | 92 |
+| sequence_collection_transformation_error | 92 |
+| predicate_branch_condition_error | 25 |
+| string_regex_pattern_logic | 11 |
+
+These assignments are suitable as critic/evaluator training features or auxiliary labels for failed responses. They should not be represented as human ground-truth rubric scores. The old broad algorithmic category has been split before training so the labels expose distinct numeric, transformation, and predicate failures.
+
+## Baseline Definition For The Next Stage
+
+For Method 1, the APPS simple baseline should be defined before training:
+
+```text
+APPS simple responses
+-> no-gate LLM rubric judge using the Phase 2 rubric
+-> compare predicted_pass/score against verifier labels
 ```
 
-## Reporting Rule
+This APPS no-gate run replaces the old MBPP v3 role.
 
-Report v3 as the pre-RL self-evaluation baseline. Report v5-lite failures as a teacher/scaffold for reward construction, not as evidence that the model can self-evaluate without external execution evidence.
+If a verifier-gated rubric teacher is built, it must be reported separately:
+
+```text
+verifier labels + rubric dimensions
+-> teacher/scaffold signal for training
+```
+
+That teacher signal is useful for reward/preference construction, but it is not evidence that the model can self-evaluate without execution evidence.
 
 ## Method 1 Handoff
 
-The next loop belongs to Method 1 and should use only train split data for training:
+Recommended next sequence:
 
-```text
-train responses
--> verifier labels and safe diagnostics
--> v5-lite failures rubric signal
--> preference/reward construction
--> RL/DPO or critic training
--> no-gate self-evaluation on validation/test
--> compare against v3
-```
+1. Run a no-gate APPS simple rubric judge baseline on held-out evaluation data or a held-out split carved from APPS train.
+2. Build a verifier-gated teacher signal only for train examples.
+3. Train either a critic/evaluator or a generator preference model.
+4. Evaluate the trained model with execution gate disabled.
+5. Compare against the APPS no-gate baseline, not the archived MBPP v3 number.
 
-Success criterion:
+## Reporting Rule
 
-- The trained model's no-gate self-evaluation improves over v3 on held-out validation/test.
-- The improvement is reported separately from the verifier-gated v5-lite teacher score.
+Report current APPS artifacts as:
+
+- verifier-labeled APPS simple generation baseline;
+- Phase 1 APPS error taxonomy;
+- Phase 2 APPS rubric.
+
+Do not report archived MBPP v3/v5-lite metrics as current APPS training evidence.

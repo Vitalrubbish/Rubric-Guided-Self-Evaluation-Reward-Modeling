@@ -1,267 +1,162 @@
 # Phase 2: Automated Taxonomy-to-Rubric Pipeline
 
-Date: 2026-07-10
+Date: 2026-07-12
 
-## Objective And Task Alignment
+## Objective
 
-Phase 2 implements the rubric-generation and rubric-judging part of `task.md`.
+Phase 2 converts the Phase 1 APPS simple refined taxonomy into a formal, judge-ready rubric.
 
-It covers **作业 3 Step 2--3**:
-
-- generate a rubric from discovered error patterns;
-- use the generated rubric for self-evaluation;
-- compare self-evaluation with an external verifier.
-
-It also prepares the handoff artifacts for **作业 4 方法 1：Error-Pattern -> Rubric -> RL 闭环**:
-
-- v3 provides the pre-RL self-evaluation baseline;
-- v5-lite failures provides a verifier-gated teacher signal for reward/preference construction;
-- the next RL stage belongs to Method 1, not Phase 2.
-
-Phase 2 no longer owns taxonomy consolidation or refined-taxonomy generation. Both steps are now part of Phase 1, which produces the refined rubric-operational taxonomy consumed by Phase 2.
-
-The Phase 2 objective is to automatically generate a formal rubric from the Phase 1 refined taxonomy, then use an LLM rubric judge to evaluate held-out responses against verifier labels. The retained flow is:
+It covers the rubric-generation part of `docs/task.md`:
 
 ```text
-Phase 1 refined taxonomy
--> LLM rubric generation
--> deterministic rubric schema/leakage audit + repair/fallback
--> v3 no-gate LLM rubric judge baseline
--> v5-lite verifier-gated rubric signal
--> deterministic judge schema/leakage audit + repair/fallback
--> verifier-alignment metrics
+discovered error taxonomy
+-> formal rubric dimensions
+-> 1-5 score anchors
+-> schema/private-leakage audit
 ```
 
-Completion boundary:
+The current Phase 2 run has generated and audited the rubric. It has not yet rerun the old MBPP v3/v5-lite judge experiments on the new APPS simple dataset. Any old v3/v5-lite numbers are archived MBPP results and are not current APPS evidence.
+
+## Phase 1 Input
+
+Current formal input:
 
 ```text
-Phase 2 ends when v3 baseline metrics and v5-lite failures signal are produced.
-RL/DPO/critic training starts in Method 1.
+data/analysis/apps_simple_phase1/apps_train_simple_qwen25_k1_t2048_taxonomy_refined_for_rubric.yaml
+data/analysis/apps_simple_phase1/apps_train_simple_qwen25_k1_t2048_taxonomy_refined_for_rubric_audit.json
+data/analysis/apps_simple_phase1/apps_train_simple_qwen25_k1_t2048_taxonomy_refined_response_assignments.jsonl
 ```
 
-## Completed Inputs
-
-Phase 1 has produced the consolidated taxonomy as an audited intermediate artifact:
+Source status:
 
 ```text
-data/analysis/phase1/mbpp_hidden_train_qwen25_k3_taxonomy_consolidated.yaml
-data/analysis/phase1/mbpp_hidden_train_qwen25_k3_taxonomy_consolidated_audit.json
-data/analysis/phase1/mbpp_hidden_train_qwen25_k3_taxonomy_consolidated_cluster_mapping.jsonl
-data/analysis/phase1/mbpp_hidden_train_qwen25_k3_taxonomy_consolidated_response_assignments.jsonl
-```
-
-Phase 1 has also produced the refined rubric-operational taxonomy, which is the formal Phase 2 input:
-
-```text
-data/analysis/phase1/mbpp_hidden_train_qwen25_k3_taxonomy_refinement_raw_response.txt
-data/analysis/phase1/mbpp_hidden_train_qwen25_k3_taxonomy_refined_for_rubric.yaml
-data/analysis/phase1/mbpp_hidden_train_qwen25_k3_taxonomy_refined_for_rubric_audit.json
-data/analysis/phase1/mbpp_hidden_train_qwen25_k3_taxonomy_refined_response_assignments.jsonl
-```
-
-Consolidation audit:
-
-```text
-raw_cluster_count = 17
-category_count = 8
-covered_cluster_count = 17
-missing_clusters = []
-duplicate_clusters = []
-unknown_clusters = []
-private_leakage_flags = []
-broad_category_flags = []
-valid = true
-```
-
-Refinement audit:
-
-```text
-source_category_count = 8
-refined_category_count = 8
-assignment_count = 519
+assignment_count = 1219
+source_category_count = 9
+refined_category_count = 9
 schema_flags = []
 generic_text_flags = []
 private_leakage_flags = []
 valid = true
-initial_accepted_categories = 2
-revised_accepted_categories = 4
-targeted_repair_accepted_categories = 2
-template_fallback_categories = []
 ```
 
-Current operational categories:
+Refined categories:
 
 ```text
-numeric_formula_correctness
-output_type_container_shape
-algorithmic_wrong_value
-syntax_parseability_or_output_format
+syntax_parseability_truncation
+output_type_or_container_shape
+edge_case_handling
+interface_name_signature_mismatch
 runtime_api_type_misuse
 string_regex_pattern_logic
-edge_case_boundary_handling
-interface_name_signature_mismatch
+numeric_formula_arithmetic_error
+sequence_collection_transformation_error
+predicate_branch_condition_error
 ```
 
-## Automation Boundary
+## Rubric Generation
 
-Phase 1 has completed:
-
-- merging raw clusters into higher-level categories;
-- naming categories;
-- generating rubric-operational refinement for each category;
-- deterministic schema validation;
-- raw-cluster coverage checks;
-- duplicate/unknown cluster checks;
-- private-leakage checks;
-- response-level assignment inheritance;
-- automatic splitting and repair when LLM output is too broad;
-- multi-candidate refinement quality gates, bad-phrase masks, generic-name rejection, and category-conditioned blocked terms;
-- automatic revision or targeted repair when refinement output is too generic, truncated, or has unreliable score anchors.
-
-The Phase 2 LLM is responsible for:
-
-- converting the 8 refined taxonomy categories into formal rubric dimensions;
-- scoring held-out responses with the formal rubric;
-- emitting structured scores, category-level rationales, and an overall decision.
-
-The Phase 2 program is responsible for:
-
-- schema validation;
-- private-leakage checks;
-- rubric category coverage checks;
-- sanitized judge-input construction;
-- LLM output repair/fallback;
-- execution-gated post-processing for v5-lite failures;
-- AUC, accuracy, Cohen's Kappa, and per-category score distribution computation.
-
-## Implemented Rubric Generation
-
-Rubric generation is implemented in:
+Implemented in:
 
 ```text
 src/rubric/generate_llm_rubric_from_taxonomy.py
-scripts/phase2/run_phase2_rubric_generation.sh
 ```
 
-Input:
+The script uses the LLM as a controlled rubric writer. Deterministic code preserves:
 
-```text
-data/analysis/phase1/mbpp_hidden_train_qwen25_k3_taxonomy_refined_for_rubric.yaml
+- exact dimension ids;
+- one dimension per refined taxonomy category;
+- equal weights;
+- all 1-5 anchors;
+- critical-gate flags;
+- source statistics;
+- schema and private-leakage constraints.
+
+The script now accepts `--rubric-name` so non-MBPP runs do not inherit the old `mbpp_hidden` rubric name.
+
+Run command used for the current APPS simple rubric:
+
+```bash
+PATH=/data2/acm-group-3/miniconda3/envs/rubric/bin:$PATH \
+CUDA_VISIBLE_DEVICES=2 \
+XDG_CACHE_HOME=/tmp/rubric-cache \
+HF_HOME=/tmp/rubric-cache/huggingface \
+TRANSFORMERS_CACHE=/tmp/rubric-cache/huggingface \
+TMPDIR=/tmp/rubric-tmp \
+/data2/acm-group-3/miniconda3/envs/rubric/bin/python \
+  src/rubric/generate_llm_rubric_from_taxonomy.py \
+  --taxonomy data/analysis/apps_simple_phase1/apps_train_simple_qwen25_k1_t2048_taxonomy_refined_for_rubric.yaml \
+  --source-audit data/analysis/apps_simple_phase1/apps_train_simple_qwen25_k1_t2048_taxonomy_refined_for_rubric_audit.json \
+  --output data/rubrics/apps_simple_phase2/apps_train_simple_llm_rubric_from_refined_taxonomy.json \
+  --audit-output data/rubrics/apps_simple_phase2/apps_train_simple_llm_rubric_from_refined_taxonomy_audit.json \
+  --raw-llm-output data/rubrics/apps_simple_phase2/apps_train_simple_llm_rubric_from_refined_taxonomy_raw_response.txt \
+  --rubric-name apps_train_simple_llm_rubric_from_refined_taxonomy_v2_split_algorithmic \
+  --model models/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28 \
+  --max-model-len 16384 \
+  --gpu-memory-utilization 0.30 \
+  --temperature 0.2 \
+  --top-p 0.95 \
+  --max-tokens 4096
 ```
 
 Outputs:
 
 ```text
-data/rubrics/phase2/mbpp_hidden_llm_rubric_from_refined_taxonomy.json
-data/rubrics/phase2/mbpp_hidden_llm_rubric_from_refined_taxonomy_audit.json
-data/rubrics/phase2/mbpp_hidden_llm_rubric_from_refined_taxonomy_raw_response.txt
+data/rubrics/apps_simple_phase2/apps_train_simple_llm_rubric_from_refined_taxonomy.json
+data/rubrics/apps_simple_phase2/apps_train_simple_llm_rubric_from_refined_taxonomy_audit.json
+data/rubrics/apps_simple_phase2/apps_train_simple_llm_rubric_from_refined_taxonomy_raw_response.txt
 ```
 
-Run command:
-
-```bash
-GPU=2 scripts/phase2/run_phase2_rubric_generation.sh
-```
-
-Use deterministic fallback for CPU-only schema debugging:
-
-```bash
-DETERMINISTIC_ONLY=1 scripts/phase2/run_phase2_rubric_generation.sh
-```
-
-Current rubric audit status:
+Current audit:
 
 ```text
-valid = true
-dimension_count = 8
+used_llm = true
+used_existing_llm_output = false
+dimension_count = 9
+duplicate_dimension_ids = []
+missing_anchor_dimensions = []
 private_leakage_flags = []
 generic_dimension_flags = []
-used_existing_llm_output = true
+used_deterministic_fallback = false
+valid = true
 ```
 
-## Current Rubric Judge Entrypoints
-
-Rubric judging is implemented in:
+Rubric name:
 
 ```text
-src/rubric/evaluate_llm_rubric_judge.py
-scripts/phase2/run_phase2_hitl_judge.sh
+apps_train_simple_llm_rubric_from_refined_taxonomy_v2_split_algorithmic
 ```
 
-The active versioned entrypoints are:
+## Completion Boundary
 
-```text
-scripts/phase2/run_phase2_hitl_v3_judge.sh
-scripts/phase2/run_phase2_hitl_v5_lite_failures_judge.sh
-```
+Current Phase 2 is complete for taxonomy-to-rubric generation.
 
-Evaluation input:
+Completed:
 
-```text
-data/responses/phase1_mbpp_hidden_qwen25_k3_labeled.jsonl
-```
+- consumed the current APPS simple refined taxonomy;
+- generated a 9-dimension rubric;
+- passed source-taxonomy validation;
+- passed dimension coverage checks;
+- passed anchor completeness checks;
+- passed private-leakage and generic-dimension checks.
 
-## Active Baseline: v3
+Not yet completed on the APPS simple dataset:
 
-v3 is the baseline for later RL because it measures rubric-based self-evaluation without an external execution gate. It corresponds to the `task.md` self-evaluation metric before self-evolving training.
+- no-gate LLM rubric judge baseline;
+- verifier-gated training-signal run;
+- evaluator/critic training;
+- post-training self-evaluation comparison.
 
-Run command:
-
-```bash
-GPU=2 scripts/phase2/run_phase2_hitl_v3_judge.sh
-```
-
-Full test metrics:
-
-| Metric | Value |
-| --- | ---: |
-| AUC | 0.618196 |
-| Accuracy | 0.586667 |
-| Cohen's Kappa | 0.184811 |
-| Overacceptance | 0.701823 |
-| False rejection | 0.110656 |
-
-## Active Training Signal: v5-Lite Failures
-
-v5-lite failures is a verifier-failure-gated rubric judge. It is used to produce lower-noise reward and preference construction signals for the Method 1 RL loop, not as proof that the LLM can self-evaluate without external execution evidence.
-
-Run command:
-
-```bash
-scripts/phase2/run_phase2_hitl_v5_lite_failures_judge.sh
-```
-
-Full test metrics:
-
-| Metric | Value |
-| --- | ---: |
-| AUC | 0.950606 |
-| Accuracy | 0.943333 |
-| Cohen's Kappa | 0.886292 |
-| Overacceptance | 0.0 |
-| False rejection | 0.116120 |
-
-## Reporting Rule
-
-Report v3 as the pre-RL self-evaluation baseline. Report v5-lite failures as a teacher/scaffold for reward construction. Do not report v5-lite failures as pure LLM self-evaluation, because it uses verifier execution results in post-processing.
-
-## Completion Status
-
-Phase 2 is complete for the current Method 1 handoff:
-
-- v3 baseline is available.
-- v5-lite failures signal is available.
-- obsolete intermediate judge/calibration/HITL implementations were removed.
-- Method 1 owns the next RL/DPO/critic training loop.
+Those steps belong to the next Method 1 training/evaluator phase.
 
 ## Acceptance Criteria
 
-The retained Phase 2 scoring pipeline is accepted only if:
+The current rubric artifact is accepted only if:
 
-- the score and raw output files contain the expected row count;
-- `audit.valid == true`;
-- `prompt_leakage_count == 0`;
-- JSON parse failures and repaired outputs are explained by the audit;
-- judge prompts do not receive verifier labels, hidden tests, exact assertions, or private diagnostics;
-- metrics are reported against verifier pass/fail labels;
-- v3 and v5-lite failures are reported under separate roles.
+- `source_audit.valid == true`;
+- the generated rubric has exactly 9 dimensions;
+- dimension ids exactly match the refined taxonomy ids;
+- every dimension has anchors `1` through `5`;
+- no private verifier fields appear in the rubric;
+- audit reports `valid = true`.
+
+The current APPS simple rubric satisfies these criteria.

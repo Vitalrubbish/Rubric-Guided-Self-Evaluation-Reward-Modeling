@@ -55,6 +55,13 @@ for stop_var in STOP_SEQUENCE STOP_SEQUENCE_2 STOP_SEQUENCE_3 STOP_SEQUENCE_4 ST
   fi
 done
 
+if [[ -n "${QUANTIZATION:-}" ]]; then
+  GEN_ARGS+=(--quantization "$QUANTIZATION")
+fi
+if [[ -n "${LOAD_FORMAT:-}" ]]; then
+  GEN_ARGS+=(--load-format "$LOAD_FORMAT")
+fi
+
 "${GEN_ARGS[@]}"
 
 "$PYTHON" src/self_play/extract_method2_revised_code.py \

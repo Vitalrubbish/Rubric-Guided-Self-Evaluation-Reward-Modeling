@@ -8,9 +8,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
-
 import yaml
-
 
 def read_jsonl(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -205,6 +203,10 @@ def main() -> None:
             "temperature": row.get("temperature"),
             "top_p": row.get("top_p"),
             "seed": row.get("seed"),
+            "max_tokens": row.get("max_tokens"),
+            "finish_reason": row.get("finish_reason"),
+            "stop_reason": row.get("stop_reason"),
+            "generated_token_count": row.get("generated_token_count"),
         }
         if args.include_private_tests:
             failure["test_list"] = row.get("test_list")

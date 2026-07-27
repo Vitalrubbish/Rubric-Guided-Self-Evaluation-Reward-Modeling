@@ -53,7 +53,9 @@ fi
   --prompt-batch-size "${PROMPT_BATCH_SIZE:-8}" \
   --max-lora-rank "${MAX_LORA_RANK:-16}" \
   --stop $'\nPublic task prompt:' \
-  --stop $'\nPrevious failed code:'
+  --stop $'\nPrevious failed code:' \
+  ${QUANTIZATION:+--quantization "$QUANTIZATION"} \
+  ${LOAD_FORMAT:+--load-format "$LOAD_FORMAT"}
 
 "$PYTHON" src/self_play/extract_method2_revised_code.py \
   --input "$GENERATIONS" \

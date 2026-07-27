@@ -54,7 +54,7 @@ GENERIC_BAD_PHRASES = {
 }
 
 CRITICAL_DIMENSION_IDS = {
-    "syntax_parseability_or_output_format",
+    "syntax_parseability_truncation",
     "runtime_api_type_misuse",
     "interface_name_signature_mismatch",
 }
@@ -237,10 +237,15 @@ def deterministic_dimension(seed: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_deterministic_rubric(taxonomy_path: Path, taxonomy: dict[str, Any], seeds: list[dict[str, Any]]) -> dict[str, Any]:
+def build_deterministic_rubric(
+    taxonomy_path: Path,
+    taxonomy: dict[str, Any],
+    seeds: list[dict[str, Any]],
+    rubric_name: str,
+) -> dict[str, Any]:
     dimensions = [deterministic_dimension(seed) for seed in seeds]
     return {
-        "name": "mbpp_hidden_llm_rubric_from_refined_taxonomy_v1",
+        "name": rubric_name,
         "source_taxonomy": str(taxonomy_path),
         "source_taxonomy_name": taxonomy.get("name"),
         "generation_method": "taxonomy_controlled_llm_with_deterministic_repair",
@@ -318,7 +323,7 @@ Hard constraints:
 
 Required output schema:
 {{
-  "name": "mbpp_hidden_llm_rubric_from_refined_taxonomy_v1",
+  "name": "{skeleton.get('name')}",
   "source_taxonomy": "path string",
   "source_taxonomy_name": "name string",
   "generation_method": "taxonomy_controlled_llm_with_deterministic_repair",
@@ -563,6 +568,7 @@ def main() -> None:
     parser.add_argument("--raw-llm-output", type=Path, default=Path("data/rubrics/phase2/mbpp_hidden_llm_rubric_from_refined_taxonomy_raw_response.txt"))
     parser.add_argument("--existing-llm-output", type=Path, help="Parse an existing raw LLM response instead of calling vLLM.")
     parser.add_argument("--deterministic-only", action="store_true", help="Write the deterministic taxonomy-derived rubric skeleton without calling an LLM.")
+    parser.add_argument("--rubric-name", default="mbpp_hidden_llm_rubric_from_refined_taxonomy_v1")
     parser.add_argument("--model")
     parser.add_argument("--max-model-len", type=int, default=8192)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.30)
@@ -575,7 +581,7 @@ def main() -> None:
     source_audit = load_json(args.source_audit) if args.source_audit else None
     source_flags = validate_source_taxonomy(taxonomy, source_audit)
     seeds = build_seed_categories(taxonomy)
-    skeleton = build_deterministic_rubric(args.taxonomy, taxonomy, seeds)
+    skeleton = build_deterministic_rubric(args.taxonomy, taxonomy, seeds, args.rubric_name)
     expected_ids = [seed["id"] for seed in seeds]
 
     used_llm = False

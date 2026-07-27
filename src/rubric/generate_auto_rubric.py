@@ -186,6 +186,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("data/rubrics/auto_rubric_refined.json"))
     parser.add_argument("--generic-output", type=Path, default=Path("data/rubrics/generic_rubric.json"))
     parser.add_argument("--random-output", type=Path, default=Path("data/rubrics/random_rubric_ablation.json"))
+    parser.add_argument(
+        "--task",
+        default="Python code generation on MBPP and HumanEval+",
+        help="Task/domain description recorded in generated rubric metadata.",
+    )
     args = parser.parse_args()
 
     taxonomy = load_yaml(args.taxonomy)
@@ -193,7 +198,7 @@ def main() -> None:
     auto_rubric = {
         "name": "auto_rubric_refined_coding_v1",
         "source_taxonomy": str(args.taxonomy),
-        "task": "Python code generation on MBPP and HumanEval+",
+        "task": args.task,
         "dimensions": [enrich_dimension(spec, example_map) for spec in DIMENSION_SPECS],
     }
 
@@ -209,13 +214,13 @@ def main() -> None:
     random_rubric = {
         "name": "random_rubric_ablation_coding_v1",
         "source_taxonomy": str(args.taxonomy),
-        "task": "Python code generation on MBPP and HumanEval+",
+        "task": args.task,
         "dimensions": random_dimensions,
     }
     generic_rubric = {
         "name": "generic_rubric_coding_v1",
         "source_taxonomy": None,
-        "task": "Python code generation on MBPP and HumanEval+",
+        "task": args.task,
         "dimensions": GENERIC_RUBRIC,
     }
 

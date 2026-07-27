@@ -36,17 +36,14 @@ REQUIRED_ANCHORS = {"1", "2", "3", "4", "5"}
 CALIBRATED_CRITICAL_IDS = {
     "interface_name_signature_mismatch",
     "runtime_api_type_misuse",
-    "syntax_parseability_or_output_format",
-    "algorithmic_wrong_value",
-    "numeric_formula_correctness",
-    "edge_case_boundary_handling",
-    "string_regex_pattern_logic",
+    "syntax_parseability_truncation",
 }
 STRICT_SEMANTIC_IDS = {
-    "numeric_formula_correctness",
-    "output_type_container_shape",
-    "algorithmic_wrong_value",
-    "edge_case_boundary_handling",
+    "numeric_formula_arithmetic_error",
+    "sequence_collection_transformation_error",
+    "predicate_branch_condition_error",
+    "edge_case_handling",
+    "output_type_or_container_shape",
     "string_regex_pattern_logic",
 }
 MAJOR_ERROR_SEVERITIES = {"major", "fatal"}
@@ -565,7 +562,7 @@ def visible_code_fallback_scores(row: dict[str, Any], rubric: dict[str, Any]) ->
     scores = {}
     for dimension in rubric.get("dimensions", []):
         dimension_id = str(dimension.get("id"))
-        if dimension_id == "syntax_parseability_or_output_format":
+        if dimension_id == "syntax_parseability_truncation":
             scores[dimension_id] = 5 if parse_ok else 1
         elif dimension_id == "interface_name_signature_mismatch":
             scores[dimension_id] = 5 if interface_ok else 1
@@ -746,7 +743,22 @@ def apply_probe_inconsistency_clamps(
             continue
         affected = [value for value in probe.get("affected_dimensions") or [] if value in semantic_ids]
         if not affected:
-            affected = ["algorithmic_wrong_value"]
+            fallback = next(
+                (
+                    dimension_id
+                    for dimension_id in [
+                        "numeric_formula_arithmetic_error",
+                        "sequence_collection_transformation_error",
+                        "predicate_branch_condition_error",
+                        "edge_case_handling",
+                        "output_type_or_container_shape",
+                        "string_regex_pattern_logic",
+                    ]
+                    if dimension_id in semantic_ids
+                ),
+                next(iter(semantic_ids), "numeric_formula_arithmetic_error"),
+            )
+            affected = [fallback]
         for dimension_id in affected:
             cap_score(
                 dimension_scores,
@@ -780,13 +792,14 @@ def strict_predicted_pass_from_judgment(
     if any(error.get("severity") in MAJOR_ERROR_SEVERITIES for error in critical_errors):
         return False
     critical_ids = set((rubric.get("aggregation") or {}).get("critical_dimension_ids") or [])
+    semantic_ids = semantic_dimension_ids(rubric)
     for dimension_id, item in dimension_scores.items():
         if not bool(item.get("applicable", True)):
             continue
         score = int(item["score"])
         if dimension_id in critical_ids and score <= 2:
             return False
-        if dimension_id in STRICT_SEMANTIC_IDS and score <= 3:
+        if dimension_id in semantic_ids and score <= 3:
             return False
     threshold = threshold_override
     if threshold is None:
@@ -811,7 +824,7 @@ def calibrated_predicted_pass_from_scores(
 ) -> bool:
     if any(scores.get(dimension_id, 5) <= 2 for dimension_id in CALIBRATED_CRITICAL_IDS):
         return False
-    if scores.get("algorithmic_wrong_value", 5) <= 3:
+    if any(scores.get(dimension_id, 5) <= 3 for dimension_id in semantic_dimension_ids(rubric)):
         return False
     threshold = threshold_override
     if threshold is None:
@@ -857,16 +870,17 @@ def apply_deterministic_clamps(
     if not checks["parse_ok"]:
         cap_score(
             dimension_scores,
-            "syntax_parseability_or_output_format",
+            "syntax_parseability_truncation",
             1,
             "extracted code does not parse with ast.parse",
             adjustments,
         )
         for dimension_id in [
-            "numeric_formula_correctness",
-            "output_type_container_shape",
-            "algorithmic_wrong_value",
-            "edge_case_boundary_handling",
+            "numeric_formula_arithmetic_error",
+            "sequence_collection_transformation_error",
+            "predicate_branch_condition_error",
+            "edge_case_handling",
+            "output_type_or_container_shape",
             "runtime_api_type_misuse",
             "string_regex_pattern_logic",
         ]:
@@ -888,7 +902,7 @@ def apply_deterministic_clamps(
         )
         cap_score(
             dimension_scores,
-            "algorithmic_wrong_value",
+            "output_type_or_container_shape",
             2,
             "solution cannot be called through the required public interface",
             adjustments,
@@ -905,9 +919,10 @@ def apply_deterministic_clamps(
 
     if checks["stub"]:
         for dimension_id in [
-            "numeric_formula_correctness",
-            "algorithmic_wrong_value",
-            "edge_case_boundary_handling",
+            "numeric_formula_arithmetic_error",
+            "sequence_collection_transformation_error",
+            "predicate_branch_condition_error",
+            "edge_case_handling",
             "string_regex_pattern_logic",
         ]:
             cap_score(
@@ -928,14 +943,14 @@ def execution_failure_dimension(row: dict[str, Any]) -> str:
     first_kind = str(diagnostics.get("first_failure_kind") or "").lower()
     text = " ".join([failure_type, diagnostic_kind, first_kind, str(row.get("error") or "").lower()])
     if "syntax" in text:
-        return "syntax_parseability_or_output_format"
+        return "syntax_parseability_truncation"
     if "interface" in text or "nameerror" in text or "not defined" in text:
         return "interface_name_signature_mismatch"
     if "type" in text or "exception" in text or "runtime" in text or "timeout" in text:
         return "runtime_api_type_misuse"
     if "wrong_type" in text or "wrong_length" in text:
-        return "output_type_container_shape"
-    return "algorithmic_wrong_value"
+        return "output_type_or_container_shape"
+    return "numeric_formula_arithmetic_error"
 
 
 def execution_evidence_text(row: dict[str, Any]) -> str:

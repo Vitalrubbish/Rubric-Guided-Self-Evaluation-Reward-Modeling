@@ -236,6 +236,11 @@ def main() -> None:
     parser.add_argument("--save-total-limit", type=int, default=2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--load-in-4bit",
+        action="store_true",
+        help="QLoRA: freeze base weights in 4-bit NF4 (bnb double-quant), train LoRA in bf16 compute",
+    )
     args = parser.parse_args()
 
     if args.max_length < 512:
@@ -301,6 +306,7 @@ def main() -> None:
             "lora_r": args.lora_r,
             "lora_alpha": args.lora_alpha,
             "lora_dropout": args.lora_dropout,
+            "load_in_4bit": args.load_in_4bit,
             "seed": args.seed,
         },
         "policy": {
@@ -322,12 +328,27 @@ def main() -> None:
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        dtype=torch.bfloat16,
-        trust_remote_code=True,
-        attn_implementation="sdpa",
-    )
+    model_kwargs: dict[str, Any] = {
+        "trust_remote_code": True,
+        "attn_implementation": "sdpa",
+    }
+    if args.load_in_4bit:
+        from transformers import BitsAndBytesConfig
+
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+        model_kwargs["device_map"] = "auto"
+    else:
+        model_kwargs["dtype"] = torch.bfloat16
+    model = AutoModelForCausalLM.from_pretrained(args.model, **model_kwargs)
+    if args.load_in_4bit:
+        from peft import prepare_model_for_kbit_training
+
+        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
     model.config.use_cache = False
     model.config.pad_token_id = tokenizer.pad_token_id
     lora_config = LoraConfig(

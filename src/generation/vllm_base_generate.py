@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Generate coding responses with a vLLM-served PEFT LoRA adapter."""
+"""Generate coding responses with a base (no-adapter) vLLM model.
+
+Same output schema as vllm_lora_generate.py so the downstream
+extract/verify pipeline works unchanged; used for bare-capability
+baselines of larger models (e.g. Qwen2.5-Coder-32B AWQ) on the Method 2
+repair gates.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +16,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from vllm import LLM, SamplingParams
-from vllm.lora.request import LoRARequest
 
 
 COPY_FIELDS = (
@@ -49,7 +54,6 @@ def batches(rows: list[dict[str, Any]], batch_size: int) -> Iterable[list[dict[s
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
-    parser.add_argument("--adapter", type=Path, required=True)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=None)
@@ -60,21 +64,18 @@ def main() -> None:
     parser.add_argument("--max-model-len", type=int, default=8192)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.70)
     parser.add_argument("--prompt-batch-size", type=int, default=64)
-    parser.add_argument("--max-lora-rank", type=int, default=16)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n", type=int, default=1)
     parser.add_argument("--stop", action="append", default=[])
-    parser.add_argument("--quantization", default=None, help="e.g. bitsandbytes for 4-bit QLoRA bases")
-    parser.add_argument("--load-format", default=None)
+    parser.add_argument("--quantization", default=None)
+    parser.add_argument("--enforce-eager", action="store_true")
     args = parser.parse_args()
 
-    if not (args.adapter / "adapter_model.safetensors").is_file():
-        raise FileNotFoundError(f"completed adapter not found: {args.adapter}")
     if args.n < 1:
         raise ValueError("--n must be at least 1")
     rows = read_jsonl(args.input, args.limit)
     if not rows:
-        raise RuntimeError("no rows selected for adapter generation")
+        raise RuntimeError("no rows selected for base generation")
 
     llm_kwargs: dict[str, Any] = {
         "model": args.model,
@@ -82,13 +83,10 @@ def main() -> None:
         "trust_remote_code": True,
         "max_model_len": args.max_model_len,
         "gpu_memory_utilization": args.gpu_memory_utilization,
-        "enable_lora": True,
-        "max_lora_rank": args.max_lora_rank,
+        "enforce_eager": args.enforce_eager,
     }
     if args.quantization:
         llm_kwargs["quantization"] = args.quantization
-    if args.load_format:
-        llm_kwargs["load_format"] = args.load_format
     llm = LLM(**llm_kwargs)
     sampling = SamplingParams(
         n=args.n,
@@ -99,7 +97,6 @@ def main() -> None:
         stop=args.stop or None,
         seed=args.seed,
     )
-    lora_request = LoRARequest("apps-simple-method1-dpo-v1", 1, str(args.adapter.resolve()))
     timestamp = datetime.now(timezone.utc).isoformat()
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -109,18 +106,17 @@ def main() -> None:
             outputs = llm.generate(
                 [str(row["prompt"]) for row in batch],
                 sampling,
-                lora_request=lora_request,
             )
             for row, output in zip(batch, outputs):
                 for sample_index, completion in enumerate(output.outputs):
                     record = {
-                        "response_id": f"{row['id']}__dpo_lora_v1_sample{sample_index}",
+                        "response_id": f"{row['id']}__base_sample{sample_index}",
                         "id": row["id"],
                         "dataset": row.get("dataset"),
                         "prompt": row["prompt"],
                         "generated_code": completion.text,
                         "model": args.model,
-                        "adapter": str(args.adapter),
+                        "adapter": None,
                         "timestamp": timestamp,
                         "sample_id": sample_index,
                         "seed": args.seed,
@@ -132,7 +128,7 @@ def main() -> None:
                         "stop_reason": getattr(completion, "stop_reason", None),
                         "stop_sequences": args.stop,
                         "generated_token_count": len(getattr(completion, "token_ids", []) or []),
-                        "generation_backend": "vllm_lora",
+                        "generation_backend": "vllm_base",
                     }
                     for key in COPY_FIELDS:
                         if key in row:
@@ -142,7 +138,7 @@ def main() -> None:
             handle.flush()
             print(f"batch={batch_index} generated={total}/{len(rows) * args.n}", flush=True)
 
-    print(json.dumps({"output": str(args.output), "rows": total, "adapter": str(args.adapter), "n": args.n}, indent=2))
+    print(json.dumps({"output": str(args.output), "rows": total, "adapter": None, "n": args.n}, indent=2))
 
 
 if __name__ == "__main__":

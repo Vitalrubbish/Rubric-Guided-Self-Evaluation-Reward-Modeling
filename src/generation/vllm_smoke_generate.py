@@ -22,7 +22,10 @@ def read_jsonl(path: Path, limit: int):
     return rows
 
 
-def response_id(problem_id: str, sample_id: int) -> str:
+def response_id(row, sample_id: int) -> str:
+    if row.get("response_id_prefix"):
+        return f"{row['response_id_prefix']}__sample{sample_id}"
+    problem_id = str(row["id"])
     return f"{problem_id}__sample{sample_id}"
 
 
@@ -31,7 +34,7 @@ def write_outputs(rows, outputs, output_file, args, timestamp: str) -> int:
     for row, out in zip(rows, outputs):
         for sample_id, completion in enumerate(out.outputs):
             record = {
-                "response_id": response_id(row["id"], sample_id),
+                "response_id": response_id(row, sample_id),
                 "id": row["id"],
                 "dataset": row["dataset"],
                 "split": row.get("split"),
@@ -46,7 +49,11 @@ def write_outputs(rows, outputs, output_file, args, timestamp: str) -> int:
                 "seed": args.seed,
                 "temperature": args.temperature,
                 "top_p": args.top_p,
+                "repetition_penalty": args.repetition_penalty,
                 "max_tokens": args.max_tokens,
+                "finish_reason": getattr(completion, "finish_reason", None),
+                "stop_reason": getattr(completion, "stop_reason", None),
+                "generated_token_count": len(getattr(completion, "token_ids", []) or []),
             }
             if "test_list" in row:
                 record["test_list"] = row["test_list"]
@@ -54,6 +61,23 @@ def write_outputs(rows, outputs, output_file, args, timestamp: str) -> int:
             if "test" in row:
                 record["test"] = row["test"]
                 record["entry_point"] = row.get("entry_point")
+            for key in ("starter_code", "code_prompt", "libs", "input_output", "difficulty", "io_mode"):
+                if key in row:
+                    record[key] = row.get(key)
+            for key in ("source_split", "eval_split"):
+                if key in row:
+                    record[key] = row.get(key)
+            for key in (
+                "repair_candidate_id",
+                "original_response_id",
+                "original_generated_code",
+                "critic_pass_probability",
+                "critic_selected_threshold",
+                "critic_predicted_pass",
+                "selection_reason",
+            ):
+                if key in row:
+                    record[key] = row.get(key)
             output_file.write(json.dumps(record, ensure_ascii=False) + "\n")
             total += 1
     output_file.flush()
@@ -68,6 +92,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument("--repetition-penalty", type=float, default=1.0)
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--max-model-len", type=int, default=2048)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.35)
@@ -93,6 +118,7 @@ def main() -> None:
         n=args.k,
         temperature=args.temperature,
         top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty,
         max_tokens=args.max_tokens,
         seed=args.seed,
     )

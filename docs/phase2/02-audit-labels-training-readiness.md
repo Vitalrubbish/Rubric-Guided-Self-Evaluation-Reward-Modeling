@@ -1,84 +1,143 @@
-# Phase 2 标注资产与训练就绪检查
+# Phase 2 Label Assets And Training Readiness
 
-日期：2026-07-11
+Date: 2026-07-12
 
-## 结论
+## Conclusion
 
-项目中确实已有大量“标注数据”，但目前保留的 active training signal 是代码 verifier 自动标签和 v5-lite failures 生成的 verifier-gated rubric signal，不是人工 rubric 标注。因此这些数据可以训练或评估 verifier-supervised pass/fail critic，也可以构造代码 preference；不能用于报告 human-GT Kappa，也不能冒充 8 个 rubric 维度的人工 1--5 分。
+The active label assets now come from APPS simple verifier execution, not MBPP v3/v5-lite judge runs.
 
-在 `task.md` 对应关系上，这些资产是 **作业 4 方法 1：Error-Pattern -> Rubric -> RL 闭环** 的 Method 1 handoff 输入。Phase 2 到此结束；最终 self-evaluation 能力提升应在 Method 1 训练后、关闭 execution gate 的评估中验证。
+They are suitable for:
 
-GPU 可用性需要在实际启动训练前重新检查。模型、Python 环境和磁盘均已就绪。
+- pass/fail critic training;
+- preference construction based on verifier outcomes;
+- failure-category auxiliary supervision for non-length failed responses;
+- evaluator/critic distillation experiments.
 
-## 标注资产盘点
+They are not suitable for:
 
-### 1. 外部 verifier 标签
+- claiming human-ground-truth rubric scores;
+- claiming pure self-evaluation ability without a no-gate evaluator run;
+- training on APPS official test.
 
-主要文件：
+## Active Label Files
 
-```text
-data/responses/phase1_mbpp_hidden_qwen25_k3_labeled.jsonl
-```
-
-共 2892 条，字段包含 `passed`、`failure_type`、`safe_diagnostics`、隐藏测试和 private diagnostics。任何 judge/critic 输入只能使用公开任务、公开接口和提交代码，禁止把隐藏测试、`passed`、诊断或 expected/actual 放进输入 prompt。
-
-| Split | Rows | Tasks | Pass | Fail | Mixed tasks |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| train | 1122 | 374 | 603 | 519 | 67 |
-| validation | 270 | 90 | 135 | 135 | 14 |
-| test | 1500 | 500 | 732 | 768 | 99 |
-
-三个 benchmark split 的 task overlap 为 0，response id 重复为 0。train 标签接近平衡，可以作为辅助 pass/fail critic 的监督数据。失败类型为 `logic_error/runtime_error/syntax_error/timeout`，但它们仍不能可靠映射成全部 8 个 rubric 维度的精确人类分数。
-
-另有 K=5 扩展文件：
+Full verifier labels:
 
 ```text
-data/responses/phase1_5_mbpp_hidden_qwen25_k5_labeled.jsonl
+data/responses/apps_train_simple_executable_qwen25_k1_t2048_full_labeled.jsonl
 ```
 
-共 4820 条，同样是 verifier 标签，不是人标。
-
-### 2. Archived human-review assets
+Non-length labels used for taxonomy:
 
 ```text
-data/hitl/rubric_human_review_queue_blind_v1.jsonl
-data/hitl/rubric_annotations_v1.sqlite3
+data/responses/apps_train_simple_executable_qwen25_k1_t2048_full_labeled_nonlength.jsonl
 ```
 
-这些文件是旧人工审核尝试的归档资产，不再是 active Phase 2 pipeline。SQLite annotations 数量为 0、annotator 数量为 0。当前训练 baseline/signal 不依赖人工审核 UI。
-
-### 3. Archived private verifier key
+Failure-category assignments:
 
 ```text
-data/hitl/rubric_human_review_key_private_v1.jsonl
+data/analysis/apps_simple_phase1/apps_train_simple_qwen25_k1_t2048_taxonomy_refined_response_assignments.jsonl
 ```
 
-该文件保存旧 queue 对应的 verifier label 和旧 judge 结果，只能作为归档核验材料，不能称为 human GT。
+Phase 2 rubric:
 
-### 4. Current judge score files
+```text
+data/rubrics/apps_simple_phase2/apps_train_simple_llm_rubric_from_refined_taxonomy.json
+```
 
-`data/rubrics/phase2/*judge_scores*.jsonl` 是模型/rubric judge 结果，不是人工标注。当前 active 用法是：
+## Verifier Label Summary
 
-- v3 scores: pre-RL self-evaluation baseline;
-- v5-lite failures scores: verifier-gated teacher/scaffold for reward construction.
+Full labeled APPS simple responses:
 
-它们都不能作为 human GT。
+| Metric | Value |
+| --- | ---: |
+| Rows | 2613 |
+| Passed | 1109 |
+| Failed | 1504 |
+| Pass rate | 42.44% |
+| Length-finished | 330 |
+| Length rate | 12.63% |
 
-## 训练条件检查
+Non-length taxonomy subset:
 
-- GPU availability must be checked at run time before starting new jobs.
-- Qwen2.5-7B-Instruct 权重完整。
-- 环境可导入 `torch 2.11.0+cu130`、`transformers 5.12.1`、`peft 0.19.1`。
-- `/data2` 尚余约 15TB。
-- `outputs/` 中有多个已完成 LoRA adapter，但没有 `trainer_state.json` 或 `checkpoint-*`，它们不是可直接 resume 的中断训练。
+| Metric | Value |
+| --- | ---: |
+| Rows | 2283 |
+| Passed | 1064 |
+| Failed | 1219 |
+| Pass rate | 46.61% |
 
-## Go/No-Go 决策
+Failure types in the taxonomy source:
 
-当前结论为 **Phase 2 complete; Go for Method 1 verifier-gated reward construction; No-Go for human-GT claims**。
+| Type | Count |
+| --- | ---: |
+| logic_error | 676 |
+| syntax_error | 311 |
+| runtime_error | 183 |
+| timeout | 48 |
+| generation_failure | 1 |
 
-Method 1 可以继续的工作：
+## Failure Category Labels
 
-1. 使用 v3 作为 pre-RL self-evaluation baseline。
-2. 使用 v5-lite failures 构造低噪声 reward/preference 信号。
-3. 训练后评估时关闭 execution gate，检验模型自身 rubric-based self-evaluation 是否相对 v3 提升。
-4. 若未来重新引入人工标注，必须作为独立 human-GT track 命名和报告。
+The refined category assignments cover 1219 non-length failures:
+
+| Category | Count |
+| --- | ---: |
+| syntax_parseability_truncation | 362 |
+| numeric_formula_arithmetic_error | 210 |
+| edge_case_handling | 194 |
+| output_type_or_container_shape | 130 |
+| runtime_api_type_misuse | 103 |
+| interface_name_signature_mismatch | 92 |
+| sequence_collection_transformation_error | 92 |
+| predicate_branch_condition_error | 25 |
+| string_regex_pattern_logic | 11 |
+
+These are model-assisted taxonomy labels with deterministic audit, not human annotations. The former broad algorithmic label has been removed from active assignments and split into the three more specific logic-failure labels above.
+
+## Leakage Rules
+
+Training or judge prompts may use:
+
+- task prompt;
+- public starter code;
+- public interface name/signature;
+- generated answer or extracted code;
+- rubric text.
+
+Training or judge prompts must not include:
+
+- verifier labels;
+- exact expected outputs;
+- private diagnostics;
+- hidden tests;
+- benchmark identity as a model-facing hint;
+- APPS official test examples in training.
+
+## Training Readiness
+
+Ready:
+
+- APPS simple verifier labels;
+- safe failure artifacts;
+- refined taxonomy assignments;
+- audited Phase 2 rubric;
+- local Qwen2.5-7B-Instruct environment.
+
+Not ready until explicitly built:
+
+- APPS no-gate rubric judge baseline;
+- verifier-gated APPS teacher signal;
+- train/validation/test split policy for critic training;
+- critic/evaluator training script and evaluation protocol.
+
+## Go/No-Go
+
+Current decision:
+
+```text
+Go: train or evaluate a verifier-supervised critic/evaluator using APPS simple train-derived data.
+Go: use taxonomy assignments as auxiliary failure labels for non-length failures.
+No-Go: claim human-GT rubric quality.
+No-Go: claim self-evaluation improvement before a no-gate APPS baseline and post-training comparison exist.
+```

@@ -14,29 +14,36 @@ The verifier is used as a gate and data filter, not as hidden-test text in the p
 
 ## Current Best
 
-The best held-out repair gate result is v0.3:
+The best held-out repair gate result on the corrected 200-row gate is v0.4:
 
-- pass: `24/38 = 63.2%`
-- extraction: `38/38 ok`
-- failures: `12 logic_error`, `1 syntax_error`, `1 runtime_error`
-- format strategy: no generated end marker; prompt ends with `Repair response:`
+- pass: `41/200 = 20.5%`, Wilson CI95 [15.5%, 26.6%]
+- paired bootstrap vs v0.3: +5 rows, CI95 [0, +10], P(not better)=0.032
 
-v0.4 successfully implemented iterative self-play data generation, but did not improve the held-out gate:
+The older 38-row gate numbers (v0.3 `24/38 = 63.2%`, v0.4 `23/38 = 60.5%`,
+v0.5 `22/38 = 57.9%`) are superseded: the 38-row gate was both
+statistically underpowered (+-15pp) and selection-biased toward
+repairability-enriched problems. On the natural failure distribution the
+true repair rates are v0.3 `18.0%`, v0.4 `20.5%`, v0.5 `19.5%`, and the
+self-play iterations are mildly helpful rather than harmful. See
+`07-gate200-selection-bias.md` for the full analysis.
 
-- pass: `23/38 = 60.5%`
-- extraction: `38/38 ok`
-- failures: `10 logic_error`, `3 timeout`, `1 syntax_error`, `1 runtime_error`
+Self-repair on unseen problems is concentrated on syntax failures
+(~24%); logic_error repair remains at 3-4% for all versions.
 
-So v0.3 remains the best checkpoint for gate pass rate. v0.4 is important as a working self-play iteration implementation.
+Historical 38-row details are kept in the per-version notes below, but all
+current comparisons use the 200-row gate.
 
 ## Version History
 
 - `01-route-switch.md`: why the project switched from Method 1 to Method 2.
 - `02-v0-1-clean-baseline.md`: first APPS clean repair baseline.
 - `03-v0-2-end-marker-failure.md`: explicit `END_REVISED_CODE` failed by causing early empty outputs.
-- `04-v0-3-no-end-marker-best.md`: current best repair gate result.
+- `04-v0-3-no-end-marker-best.md`: v0.3 format strategy (no end marker; prompt ends with `Repair response:`).
 - `05-v0-4-iterative-selfplay.md`: iterative self-generated repair loop result.
 - `06-v0-5-selective-stop50.md`: small stop-finished self-play data mixing canary.
+- `06-v0-5b-targeted50.md`: balanced targeted 50-row variant (data built; training pending).
+- `07-gate200-selection-bias.md`: expanded 200-row gate, selection-bias correction, and the corrected version ranking (v0.4 best).
+- `08-v0-6-second-iteration-plateau.md`: second self-play iteration from v0.4; trajectory 36→41→36 shows the loop oscillates rather than compounds; gold-100 telemetry shows attribution flat and logic repair stuck at ~5%.
 
 Planning notes and superseded intermediate notes are under `docs/method2/archive/`.
 
@@ -79,18 +86,24 @@ GPU=1 scripts/method2/run_method2_apps_self_play_v0_4_iterative_full.sh
 
 Do not add stricter format controls. Format is already stable in v0.3/v0.4.
 
-The next useful work is selective self-play data mixing:
+All evaluation now uses the 200-row gate (`07-gate200-selection-bias.md`),
+with Wilson CI and paired bootstrap as the acceptance criteria.
 
-- avoid full-weight mixing of all self-generated rows;
-- prefer shorter `finish=stop` generated repairs;
-- avoid generated rows with `finish=length`;
-- try small canaries with `MAX_GENERATED_TOTAL=50` or `100`;
-- target prompts or failure families that v0.3 still misses.
+Status after v0.6 (`08-v0-6-second-iteration-plateau.md`): pure self-play
+iteration **plateaus at iteration 2** (36→41→36). The loop has no channel
+to inject information the model does not already possess. Gold-100
+telemetry shows the binding constraint is logic **repair** capability
+(~5%), not error finding (74% hit-or-partial), and that ERROR_FINDINGS
+barely drive REVISED_CODE on logic errors.
 
-Current selective canary:
+Priority order:
 
-```bash
-scripts/method2/build_method2_apps_self_play_sft_v0_5_stop50.sh
-GPU=1 scripts/method2/run_method2_apps_self_play_critic_repair_sft_v0_5_stop50.sh
-GPU=1 scripts/method2/run_method2_apps_self_play_repair_gate_v0_5_stop50.sh
-```
+1. v0.7 external-signal arm: inject repair-side demonstrations that map
+   correct diagnosis → correct fix (gold repair data), measured against
+   the pure self-play trajectory. This is the controlled answer to
+   "which errors need external signals".
+2. Optional: v0.5b targeted50 can still be trained/gated for
+   completeness, but selective-mixing is no longer the main question.
+3. Report writing: the trajectory (bootstrap → v0.4 gain → v0.6 plateau),
+   the rubric ablation negative result, and the findings→repair causal
+   disconnect are the core results.

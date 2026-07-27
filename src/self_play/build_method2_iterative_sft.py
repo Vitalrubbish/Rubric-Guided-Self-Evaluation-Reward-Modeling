@@ -15,6 +15,7 @@ from typing import Any, Iterable
 
 REVISED_CODE_RE = re.compile(r"(?im)^\s*REVISED[_ ]CODE\s*:\s*")
 ERROR_FINDINGS_RE = re.compile(r"(?im)^\s*ERROR_FINDINGS\s*:\s*")
+PROBLEM_ID_RE = re.compile(r"apps/(?:train|test|validation)/(\d+)")
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -79,7 +80,7 @@ def clean_finding(line: str) -> str:
     return line.rstrip(".") + "." if line and not line.endswith((".", "!", "?")) else line
 
 
-def extract_findings(raw_completion: str, count: int) -> list[str]:
+def extract_explicit_findings(raw_completion: str, count: int | None = None) -> list[str]:
     findings_text = ""
     error_match = ERROR_FINDINGS_RE.search(raw_completion)
     revised_match = REVISED_CODE_RE.search(raw_completion)
@@ -94,8 +95,15 @@ def extract_findings(raw_completion: str, count: int) -> list[str]:
             continue
         if cleaned not in findings:
             findings.append(cleaned)
-        if len(findings) >= count:
+        if count is not None and len(findings) >= count:
             break
+    return findings
+
+
+def extract_findings(raw_completion: str, count: int) -> list[str]:
+    findings = extract_explicit_findings(raw_completion, count)
+    if len(findings) >= count:
+        return findings[:count]
     fallback = [
         "The previous solution failed the public task behavior for this APPS prompt.",
         "The revised implementation preserves the requested interface and fixes the observed failure.",
@@ -118,6 +126,97 @@ def rank_generated(row: dict[str, Any]) -> tuple[int, int, int, str]:
     finish_penalty = 0 if row.get("finish_reason") == "stop" else 1
     token_count = int(row.get("method2_generated_token_count") or row.get("generated_token_count") or 0)
     return (finish_penalty, note_penalty, token_count, str(row.get("response_id") or ""))
+
+
+def marker_count(raw_completion: str) -> int:
+    return len(ERROR_FINDINGS_RE.findall(raw_completion)) + len(REVISED_CODE_RE.findall(raw_completion))
+
+
+def problem_number(base_row: dict[str, Any]) -> int | None:
+    candidates = [
+        base_row.get("problem_id"),
+        (base_row.get("metadata") or {}).get("problem_id"),
+        base_row.get("id"),
+    ]
+    for value in candidates:
+        match = PROBLEM_ID_RE.search(str(value or ""))
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def problem_decile(base_row: dict[str, Any], deciles: int) -> str:
+    number = problem_number(base_row)
+    if number is None:
+        return "unknown"
+    return f"d{number % deciles:02d}"
+
+
+def bucket_key(
+    base_row: dict[str, Any],
+    generated_row: dict[str, Any],
+    key_name: str,
+    problem_deciles: int,
+) -> str:
+    metadata = base_row.get("metadata") or {}
+    selection_reason = str(metadata.get("selection_reason") or "unknown")
+    io_mode = str(generated_row.get("io_mode") or base_row.get("io_mode") or "unknown")
+    decile = problem_decile(base_row, problem_deciles)
+    if key_name == "none":
+        return "all"
+    if key_name == "selection_reason":
+        return selection_reason
+    if key_name == "io_mode":
+        return io_mode
+    if key_name == "selection_reason_io":
+        return f"{selection_reason}|{io_mode}"
+    if key_name == "problem_decile":
+        return decile
+    if key_name == "selection_reason_problem_decile":
+        return f"{selection_reason}|{decile}"
+    raise ValueError(f"unsupported balance key: {key_name}")
+
+
+def select_generated_candidates(
+    candidates_by_id: dict[str, list[dict[str, Any]]],
+    base_by_id: dict[str, dict[str, Any]],
+    max_generated_per_id: int,
+    max_generated_total: int | None,
+    selection_strategy: str,
+    balance_key_name: str,
+    problem_deciles: int,
+) -> list[tuple[str, dict[str, Any]]]:
+    selected_by_id: list[tuple[str, dict[str, Any]]] = []
+    for base_id in sorted(candidates_by_id):
+        selected = sorted(candidates_by_id[base_id], key=rank_generated)[:max_generated_per_id]
+        selected_by_id.extend((base_id, row) for row in selected)
+
+    if selection_strategy == "sorted":
+        return selected_by_id[:max_generated_total]
+    if selection_strategy != "round_robin":
+        raise ValueError(f"unsupported selection strategy: {selection_strategy}")
+
+    buckets: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
+    for base_id, row in selected_by_id:
+        key = bucket_key(base_by_id[base_id], row, balance_key_name, problem_deciles)
+        buckets[key].append((base_id, row))
+    for key in buckets:
+        buckets[key].sort(key=lambda item: (rank_generated(item[1]), item[0]))
+
+    ordered: list[tuple[str, dict[str, Any]]] = []
+    bucket_names = sorted(buckets)
+    while bucket_names:
+        next_bucket_names: list[str] = []
+        for key in bucket_names:
+            bucket = buckets[key]
+            if bucket:
+                ordered.append(bucket.pop(0))
+                if max_generated_total is not None and len(ordered) >= max_generated_total:
+                    return ordered
+            if bucket:
+                next_bucket_names.append(key)
+        bucket_names = next_bucket_names
+    return ordered
 
 
 def generated_token_count(row: dict[str, Any]) -> int:
@@ -180,6 +279,22 @@ def main() -> None:
     )
     parser.add_argument("--max-generated-tokens", type=int, default=None)
     parser.add_argument("--max-extraction-notes", type=int, default=None)
+    parser.add_argument("--min-explicit-findings", type=int, default=None)
+    parser.add_argument("--max-marker-count", type=int, default=None)
+    parser.add_argument("--selection-strategy", choices=["sorted", "round_robin"], default="sorted")
+    parser.add_argument(
+        "--balance-key",
+        choices=[
+            "none",
+            "selection_reason",
+            "io_mode",
+            "selection_reason_io",
+            "problem_decile",
+            "selection_reason_problem_decile",
+        ],
+        default="selection_reason_problem_decile",
+    )
+    parser.add_argument("--problem-deciles", type=int, default=10)
     parser.add_argument("--findings-count", type=int, default=2)
     parser.add_argument("--source-tag", default="method2_v0_4_self_generated_pass")
     parser.add_argument("--allow-empty-generated", action="store_true")
@@ -194,6 +309,12 @@ def main() -> None:
         raise ValueError("--max-generated-tokens must be positive")
     if args.max_extraction_notes is not None and args.max_extraction_notes < 0:
         raise ValueError("--max-extraction-notes cannot be negative")
+    if args.min_explicit_findings is not None and args.min_explicit_findings < 0:
+        raise ValueError("--min-explicit-findings cannot be negative")
+    if args.max_marker_count is not None and args.max_marker_count < 1:
+        raise ValueError("--max-marker-count must be positive")
+    if args.problem_deciles < 1:
+        raise ValueError("--problem-deciles must be positive")
 
     base_rows = read_jsonl(args.base_sft)
     generated_rows = read_jsonl(args.generated_labeled)
@@ -235,6 +356,15 @@ def main() -> None:
         if args.max_extraction_notes is not None and len(extraction_notes) > args.max_extraction_notes:
             counts["skipped:too_many_extraction_notes"] += 1
             continue
+        raw_completion = str(row.get("method2_raw_completion") or "")
+        if args.max_marker_count is not None and marker_count(raw_completion) > args.max_marker_count:
+            counts["skipped:too_many_markers"] += 1
+            continue
+        if args.min_explicit_findings is not None:
+            explicit_findings = extract_explicit_findings(raw_completion, args.min_explicit_findings)
+            if len(explicit_findings) < args.min_explicit_findings:
+                counts["skipped:not_enough_explicit_findings"] += 1
+                continue
         code = normalize_code(row.get("generated_code"))
         if not code:
             counts["skipped:empty_code"] += 1
@@ -254,20 +384,25 @@ def main() -> None:
 
     generated_sft_rows: list[dict[str, Any]] = []
     accepted_labeled_rows: list[dict[str, Any]] = []
-    for base_id in sorted(candidates_by_id):
-        selected = sorted(candidates_by_id[base_id], key=rank_generated)[: args.max_generated_per_id]
-        for row in selected:
-            built = build_generated_row(base_by_id[base_id], row, args.findings_count, args.source_tag)
-            if not built:
-                counts["skipped:build_failed"] += 1
-                continue
-            generated_sft_rows.append(built)
-            accepted_labeled_rows.append(row)
-            counts["generated_sft_selected"] += 1
-            if args.max_generated_total is not None and len(generated_sft_rows) >= args.max_generated_total:
-                break
-        if args.max_generated_total is not None and len(generated_sft_rows) >= args.max_generated_total:
-            break
+    selected_bucket_counts: Counter[str] = Counter()
+    selected_candidates = select_generated_candidates(
+        candidates_by_id=candidates_by_id,
+        base_by_id=base_by_id,
+        max_generated_per_id=args.max_generated_per_id,
+        max_generated_total=args.max_generated_total,
+        selection_strategy=args.selection_strategy,
+        balance_key_name=args.balance_key,
+        problem_deciles=args.problem_deciles,
+    )
+    for base_id, row in selected_candidates:
+        built = build_generated_row(base_by_id[base_id], row, args.findings_count, args.source_tag)
+        if not built:
+            counts["skipped:build_failed"] += 1
+            continue
+        generated_sft_rows.append(built)
+        accepted_labeled_rows.append(row)
+        selected_bucket_counts[bucket_key(base_by_id[base_id], row, args.balance_key, args.problem_deciles)] += 1
+        counts["generated_sft_selected"] += 1
 
     if not generated_sft_rows and not args.allow_empty_generated:
         raise SystemExit("no verifier-passing generated rows selected; run generation/verification first or pass --allow-empty-generated")
@@ -299,6 +434,12 @@ def main() -> None:
         "required_finish_reasons": sorted(required_finish_reasons),
         "max_generated_tokens": args.max_generated_tokens,
         "max_extraction_notes": args.max_extraction_notes,
+        "min_explicit_findings": args.min_explicit_findings,
+        "max_marker_count": args.max_marker_count,
+        "selection_strategy": args.selection_strategy,
+        "balance_key": args.balance_key,
+        "problem_deciles": args.problem_deciles,
+        "selected_bucket_counts": dict(selected_bucket_counts),
         "counts": dict(counts),
         "policy": {
             "route": "Method 2 iterative self-play repair",
